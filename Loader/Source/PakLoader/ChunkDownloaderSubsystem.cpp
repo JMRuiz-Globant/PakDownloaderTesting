@@ -1,7 +1,6 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "ChunkDownloaderSubsystem.h"
-#include "ChunkDownloader.h"
 #include "HttpModule.h"
 #include "IPlatformFilePak.h"
 #include "Interfaces/IHttpRequest.h"
@@ -15,6 +14,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogChunkDownloaderSubsystem, Log, All);
 
 void UChunkDownloaderSubsystem::Initialize(FSubsystemCollectionBase &Collection) {
 	Super::Initialize(Collection);
+
+	// Default initialization for a Windows machine with 8 cores. 
 	FChunkDownloader::GetOrCreate()->Initialize("Windows", 8);
 }
 
@@ -23,66 +24,30 @@ void UChunkDownloaderSubsystem::Deinitialize() {
 	FChunkDownloader::Shutdown();
 }
 
+void UChunkDownloaderSubsystem::GetLoadingProgress(int32& DLed, int32& ToDL, float& DLPercent, int32& Mounted, int32& ToMount, float& MountPercent) const {
+	//Get a reference to ChunkDownloader
+	TSharedRef<FChunkDownloader> Downloader = FChunkDownloader::GetChecked();
+
+	//Get the loading stats struct
+	FChunkDownloader::FStats LoadingStats = Downloader->GetLoadingStats();
+
+	//Get the bytes downloaded and bytes to download
+	DLed = LoadingStats.BytesDownloaded;
+	ToDL = LoadingStats.TotalBytesToDownload;
+
+	//Get the number of chunks mounted and chunks to download
+	Mounted = LoadingStats.ChunksMounted;
+	ToMount = LoadingStats.TotalChunksToMount;
+
+	//Calculate the download and mount percent using the above stats
+	DLPercent = (float)DLed / (float)ToDL;
+	MountPercent = (float)Mounted / (float)ToMount;
+}
+
 void UChunkDownloaderSubsystem::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, FChunkDownloaderSubsystemCallback Callback)
 {
 	auto ChunkDownloader = FChunkDownloader::GetChecked();
 	
-	const FString TestPath1 = TEXT("../../../PakMap/Content/TestPak/");
-	const FString TestPath2 = TEXT("../../../PakMap/Plugins/TestPakPluginMap/Content/TestPakPlugin/");
-
-	{
-		FString LeftStr, RightStr;
-		if (TestPath1.Split(TEXT("/Plugins/"), &LeftStr, &RightStr))
-		{
-			// This appears to be within a plugin folder. Now we need to get the plugin name:
-			if (RightStr.Split(TEXT("/Content/"), &LeftStr, &RightStr)) {
-				FString PluginRootDir = FString::Printf(TEXT("/%s/"), *LeftStr);
-				UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Pak mount point should be: %s"), *PluginRootDir);
-			}
-
-		}
-		else if (TestPath1.Split(TEXT("/Content/"), &LeftStr, &RightStr))
-		{
-			// This appears to be the content folder.
-			FString GameRootDir = TEXT("/Game/");
-			UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Pak mount point should be: %s"), *GameRootDir);
-
-		}
-	}
-
-
-
-
-
-	{
-		FString LeftStr, RightStr;
-		if (TestPath2.Split(TEXT("/Plugins/"), &LeftStr, &RightStr))
-		{
-			// This appears to be within a plugin folder. Now we need to get the plugin name:
-			if (RightStr.Split(TEXT("/Content/"), &LeftStr, &RightStr)) {
-				FString PluginRootDir = FString::Printf(TEXT("/%s/"), *LeftStr);
-				UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Pak mount point should be: %s"), *PluginRootDir);
-			}
-
-		}
-		else if (TestPath2.Split(TEXT("/Content/"), &LeftStr, &RightStr))
-		{
-			// This appears to be the content folder.
-			FString GameRootDir = TEXT("/Game/");
-			UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Pak mount point should be: %s"), *GameRootDir);
-
-		}
-	}
-
-
-
-	
-
-
-	UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("%s"), *FPaths::ProjectPluginsDir());
-	UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("%s"), *FPaths::ProjectContentDir());
-
-
 	// Try to load cached build. This populates some of the ChunkDownloader internal properties and can avoid downloading files that were cached on a prior execution and are still valid.
 	ChunkDownloader->LoadCachedBuild(DeploymentName);
 
@@ -120,8 +85,85 @@ void UChunkDownloaderSubsystem::PatchGame(const TArray<int32>& ChunkIds, FChunkD
 
 
 
-// Copy of the function with the same name found in ChunkDownloader.cpp since the original isn't accessible.
-static TArray<FPakFileEntry> ParseManifest(const FString& ManifestPath, TMap<FString, FString>* Properties = nullptr) {
+
+void UChunkDownloaderSubsystem::RegisterMounts(FChunkDownloaderSubsystemCallback Callback)
+{
+	// Only attempt if Update Build was called first.
+	if (!bIsDownloadManifestUpToDate) {
+		UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Cannot patch the game before updating the manifest."));
+		Callback.ExecuteIfBound(false);
+		return;
+	}
+
+	/*
+	This function is necessary due to the fact that the FChunkDownloader class is too opaque for our requirements.
+	Ideally, we would have access to the FChunkDownloader::PakFiles property, which contains literally ALL the data we need, it maps each pak file to its chunk ID, keeps track of its load status and even URL.
+	But since we have no means of accessing it, we need to somehow rebuild this information.
+
+	We will do this first by getting the list of mounted pak files from the FPakPlatformFile manager, which will list all of them, even those that aren't handled by us.
+	Then we will get the ChunkDownloader's manifest data using a duplicate of the function it uses internally for this purpose, and compare both lists to get which of our pak files were mounted.
+	*/
+
+	FPakPlatformFile* PakFileManager = (FPakPlatformFile*)(FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")));
+
+	// Get the filenames of all pak files that are mounted.
+	TArray<FString> MountedPaks;
+	PakFileManager->GetMountedPakFilenames(MountedPaks);
+
+
+	// Parse the cached build manifest. With this we can identify the IDs of all pak files.
+	const FString CacheFolder = FPaths::ProjectPersistentDownloadDir() / TEXT("PakCache/");
+	const TArray<FPakFileEntry> CachedManifest = UChunkDownloaderSubsystem::ParseManifest(CacheFolder / TEXT("CachedBuildManifest.txt"));
+
+	// Keep all the root directories in an array that we can use later.
+	TArray<FString> PakRootDirs;
+
+	// Iterate the parsed manifest data, and check for mounted paks.
+	for (const FPakFileEntry& CachedFileEntry : CachedManifest) {
+		const FString PakFileName = CachedFileEntry.FileName;
+		const FString PakFilePath = CacheFolder / PakFileName;
+		if (MountedPaks.Contains(PakFilePath)) {
+			TRefCountPtr<FPakFile> PakFile = new FPakFile(PakFileManager, *PakFilePath, false);
+			FPakFile* Pak = PakFile.GetReference();
+			if (Pak && Pak->IsValid()) {
+
+
+				/*
+				At this point we know this is one of our pak files that's already mounted.
+				Now, we need to figure out where to mount it, which implies some complexity if the file was generated outside the main project.
+
+				If we could extend the FChunkDownloader class, the best place to do this would be directly in the FChunkDownloader::MountChunk() function or somewhere close.
+				This would save us from unnecessary checkups.
+				*/
+
+				const FString PakMountPoint = Pak->GetMountPoint();
+				const FString PakRootDir = UChunkDownloaderSubsystem::ParseRootDir(PakMountPoint);
+				if (!PakRootDir.IsEmpty()) {
+					FPackageName::RegisterMountPoint(PakRootDir, PakMountPoint);
+					PakRootDirs.AddUnique(PakRootDir);
+				}
+				else {
+					UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("No valid root dir could be chosen for pak file %s with mount point %s."), *PakFileName, *PakMountPoint);
+				}
+			}
+		}
+
+	}
+				
+	/*
+	Once all the mount points have been created, we still need the Asset Registry to scan the directories and validate assets. We do this afterwards to avoid repeated calls, which can be performance-intensive if there are many assets.
+	*/
+
+	// Add the mounted directories to the Asset Registry. This is necessary to be able to load maps and secondary asset dependencies.
+	if (PakRootDirs.Num() > 0) {
+		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		AssetRegistry.ScanPathsSynchronous(PakRootDirs, true);
+	}
+
+	Callback.ExecuteIfBound(PakRootDirs.Num() > 0);
+}
+
+TArray<FPakFileEntry> UChunkDownloaderSubsystem::ParseManifest(const FString& ManifestPath, TMap<FString, FString>* Properties) {
 	int32 ExpectedEntries = -1;
 	TArray<FPakFileEntry> Entries;
 	IFileHandle* ManifestFile = IPlatformFile::GetPlatformPhysical().OpenRead(*ManifestPath);
@@ -249,13 +291,13 @@ static TArray<FPakFileEntry> ParseManifest(const FString& ManifestPath, TMap<FSt
 	return Entries;
 }
 
-static FString ParseRootDir(const FString& MountPoint)
+FString UChunkDownloaderSubsystem::ParseRootDir(const FString& MountPoint)
 {
-	// The mount point set within the pak file is usually the outermost directory of all the files contained.
+	// The default mount point set within the pak file is usually the outermost directory of all the files contained.
 	// To avoid breaking secondary asset links, we will mount the directories based off either the "/<ProjectName>/Content" folder or the "/<ProjectName>/Plugins/<PluginName>/Content" folder.
 
 	FString LeftStr, RightStr;
-	
+
 	if (MountPoint.Split(TEXT("/Plugins/"), &LeftStr, &RightStr))
 	{
 		// A plugin directory should be something like "../../../<ProjectName>/Plugins/<PluginName>/Content/<etc>".
@@ -263,14 +305,13 @@ static FString ParseRootDir(const FString& MountPoint)
 		// RightStr should contain now "<PluginName>/Content/<etc>".
 
 		if (RightStr.Split(TEXT("/Content/"), &LeftStr, &RightStr)) {
-			
+
 			// LeftStr  should contain now "<PluginName>".
 			// RightStr should contain now "<etc>".
 
 			// Root should be either "/<PluginName>/" or "/<PluginName>/<etc>/".
 			return FPaths::RemoveDuplicateSlashes(FString::Printf(TEXT("/%s/%s/"), *LeftStr, *RightStr));
 		}
-
 	}
 	else if (MountPoint.Split(TEXT("/Content/"), &LeftStr, &RightStr))
 	{
@@ -282,88 +323,11 @@ static FString ParseRootDir(const FString& MountPoint)
 		return  FPaths::RemoveDuplicateSlashes(FString::Printf(TEXT("/Game/%s/"), *RightStr));
 	}
 
-	// It is possible to create a pak file with a MountPoint that isn't relative to a plugin or game content folders.
+	// It is possible to create a pak file with a mount point that isn't relative to a plugin or game content folders.
 	// For example, if a pak file contains elements from plugins AND game content folders, the mount point will probably be something like "../../../<ProjectName>".
 	// Handling such pak files is out of the scope of this example.
 
 	return FString();
-}
-
-
-
-void UChunkDownloaderSubsystem::RegisterMounts(FChunkDownloaderSubsystemCallback Callback)
-{
-	// Only attempt if Update Build was called first.
-	if (!bIsDownloadManifestUpToDate) {
-		UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("Cannot patch the game before updating the manifest."));
-		Callback.ExecuteIfBound(false);
-		return;
-	}
-
-	FPakPlatformFile* PakFileManager = (FPakPlatformFile*)(FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")));
-
-	// Get the filenames of all pak files that are mounted.
-	TArray<FString> MountedPaks;
-	PakFileManager->GetMountedPakFilenames(MountedPaks);
-
-
-	// Parse the cached build manifest. With this we can identify the IDs of all pak files.
-	const FString CacheFolder = FPaths::ProjectPersistentDownloadDir() / TEXT("PakCache/");
-	const TArray<FPakFileEntry> CachedManifest = ParseManifest(CacheFolder / TEXT("CachedBuildManifest.txt"));
-
-	TArray<FString> PakRootDirs;
-
-	// Iterate the parsed manifest data, and check for mounted paks.
-	for (const FPakFileEntry& CachedFileEntry : CachedManifest) {
-		const FString PakFileName = CachedFileEntry.FileName;
-		const FString PakFilePath = CacheFolder / PakFileName;
-		if (MountedPaks.Contains(PakFilePath)) {
-			TRefCountPtr<FPakFile> PakFile = new FPakFile(PakFileManager, *PakFilePath, false);
-			FPakFile* Pak = PakFile.GetReference();
-			if (Pak && Pak->IsValid()) {
-
-				// This is a pak file that was mounted through our system. Now we need to ascertain the mount point.
-				const FString PakMountPoint = Pak->GetMountPoint();
-				const FString PakRootDir = ParseRootDir(PakMountPoint);
-				if (!PakRootDir.IsEmpty()) {
-					FPackageName::RegisterMountPoint(PakRootDir, PakMountPoint);
-					PakRootDirs.AddUnique(PakRootDir);
-				}
-				else {
-					UE_LOG(LogChunkDownloaderSubsystem, Display, TEXT("No valid root dir could be chosen for pak file %s with mount point %s."), *PakFileName, *PakMountPoint);
-				}
-			}
-		}
-
-	}
-
-	// Add the mounted directories to the Asset Registry. This is necessary to be able to load maps and secondary assets.
-	if (PakRootDirs.Num() > 0) {
-		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-		AssetRegistry.ScanPathsSynchronous(PakRootDirs, true);
-	}
-
-	Callback.ExecuteIfBound(PakRootDirs.Num() > 0);
-}
-
-void UChunkDownloaderSubsystem::GetLoadingProgress(int32 &DLed, int32 &ToDL, float &DLPercent, int32 &Mounted, int32 &ToMount, float &MountPercent) const {
-	//Get a reference to ChunkDownloader
-	TSharedRef<FChunkDownloader> Downloader = FChunkDownloader::GetChecked();
-
-	//Get the loading stats struct
-	FChunkDownloader::FStats LoadingStats = Downloader->GetLoadingStats();
-
-	//Get the bytes downloaded and bytes to download
-	DLed = LoadingStats.BytesDownloaded;
-	ToDL = LoadingStats.TotalBytesToDownload;
-
-	//Get the number of chunks mounted and chunks to download
-	Mounted = LoadingStats.ChunksMounted;
-	ToMount = LoadingStats.TotalChunksToMount;
-
-	//Calculate the download and mount percent using the above stats
-	DLPercent = (float)DLed / (float)ToDL;
-	MountPercent = (float)Mounted / (float)ToMount;
 }
 
 #undef LOCTEXT_NAMESPACE
