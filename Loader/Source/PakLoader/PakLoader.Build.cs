@@ -10,7 +10,7 @@ public class PakLoader : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "ChunkDownloader", "HTTP", "PakFile" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "ChunkDownloaderCustom", "HTTP", "PakFile" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

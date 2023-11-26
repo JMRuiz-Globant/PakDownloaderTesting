@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.2",
+	"EngineAssociation": "{5FD3D766-4317-FE8D-6E43-33A1AF09E0B5}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -19,12 +19,8 @@
 			]
 		},
 		{
-			"Name": "VisualStudioTools",
-			"Enabled": true,
-			"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/362651520df94e4fa65492dbcba44ae2",
-			"SupportedTargetPlatforms": [
-				"Win64"
-			]
+			"Name": "ChunkDownloaderCustom",
+			"Enabled": true
 		}
 	]
 }

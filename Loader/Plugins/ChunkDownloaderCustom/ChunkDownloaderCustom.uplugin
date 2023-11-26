@@ -1,0 +1,20 @@
+{
+	"FileVersion" : 3,
+	
+	"FriendlyName" : "Chunk Downloader Custom",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"Description" : "Implements a streaming install client. Based off Epic's Chunk Downloader plugin, modified to handle content generated in external projects",
+	"Category" : "Online Platform",
+	"CreatedBy" : "",
+	"CreatedByURL" : "",
+	"EnabledByDefault" : true,
+
+    "Modules": [
+        {
+            "Name": "ChunkDownloaderCustom",
+            "Type": "Runtime",
+            "LoadingPhase" : "PostConfigInit"
+        }
+    ]
+}
