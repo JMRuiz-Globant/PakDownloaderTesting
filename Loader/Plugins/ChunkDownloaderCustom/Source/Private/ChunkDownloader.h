@@ -6,7 +6,8 @@
 
 template<typename TTask> class FAsyncTask;
 class IHttpRequest;
-class FDownload;
+class FDownloadChunk;
+class FPakFile;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FPlatformChunkInstallMultiDelegate, uint32, bool);
 
@@ -17,23 +18,23 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FPlatformChunkInstallMultiDelegate, uint32,
  * that were generated in the whole project's packaging process. For example, it assumes all mount points used by the pak files are tracked and registered automatically by the project.
  * It also assumes that their contents are tracked and handled by the Asset Registry automatically.
  * 
- * These assumptions aren't true for external pak files, and while the missing code to handle them isn't particularily lengthy or complex, the original plugin keeps most of its contents private.
+ * These assumptions aren't true for external pak files, and while the missing code to handle them isn't particularly lengthy or complex, the original plugin keeps most of its contents private.
  * This makes it necessary to work around it and perform redundant tasks to allow for this additional functionality. Extending the class isn't possible either,
  * since the plugin includes multiple classes that make explicit use of this class and give no room for inheritance or injection.
  * 
  * Fortunately, the plugin itself is very self-contained so it's possible to exchange it for this duplicate without breaking anything.
- * It should even be possible to have both plugins active at the same time, although this is unnecessary since this one performs everytghing the other does.
+ * It should even be possible to have both plugins active at the same time, although this is unnecessary since this one performs everything the other does.
  */
-class CHUNKDOWNLOADERCUSTOM_API FChunkDownloader : public TSharedFromThis<FChunkDownloader>
+class CHUNKDOWNLOADERCUSTOM_API FChunkDownloaderCustom : public TSharedFromThis<FChunkDownloaderCustom>
 {
 public:
-	~FChunkDownloader();
+	~FChunkDownloaderCustom();
 	typedef TFunction<void(bool bSuccess)> FCallback;
 
 	// static getters
-	static TSharedPtr<FChunkDownloader> Get();
-	static TSharedRef<FChunkDownloader> GetChecked();
-	static TSharedRef<FChunkDownloader> GetOrCreate();
+	static TSharedPtr<FChunkDownloaderCustom> Get();
+	static TSharedRef<FChunkDownloaderCustom> GetChecked();
+	static TSharedRef<FChunkDownloaderCustom> GetOrCreate();
 	static void Shutdown();
 
 public:
@@ -130,10 +131,10 @@ public:
 protected:
 	friend class UChunkDownloaderSubsystem;
 	friend class FChunkDownloaderCustomModule;
-	friend class FChunkDownloaderPlatformWrapper;
-	friend class FDownload;
+	friend class FChunkDownloaderCustomPlatformWrapper;
+	friend class FDownloadChunk;
 
-	FChunkDownloader();
+	FChunkDownloaderCustom();
 
 	static bool WriteStringAsUtf8TextFile(const FString& FileText, const FString& FilePath);
 	static bool CheckFileSha1Hash(const FString& FullPathOnDisk, const FString& Sha1HashStr);
@@ -167,22 +168,22 @@ private:
 		ERegistryStatus IsRegistered = ERegistryStatus::Untracked;
 
 		// Pointer to the mounted pak file object.
-		TRefCountPtr<class FPakFile> Pak;
+		TRefCountPtr<FPakFile> Pak;
 
 		// grows as the file is downloaded. See Entry.FileSize for the target size
 		uint64 SizeOnDisk = 0;
 
 		// async download
 		int32 Priority = 0;
-		TSharedPtr<FDownload> Download;
-		TArray<FChunkDownloader::FCallback> PostDownloadCallbacks;
+		TSharedPtr<FDownloadChunk> Download;
+		TArray<FCallback> PostDownloadCallbacks;
 	};
 
 	// represents an async mount
 	class FPakMountWork;
 	struct FPakMountWorkResult
 	{
-		FPakMountWorkResult(class FPakFile* Pak) : Pak(Pak) {}
+		FPakMountWorkResult(FPakFile* Pak);
 		TRefCountPtr<FPakFile> Pak;
 		ERegistryStatus IsRegistered = ERegistryStatus::Untracked;
 	};

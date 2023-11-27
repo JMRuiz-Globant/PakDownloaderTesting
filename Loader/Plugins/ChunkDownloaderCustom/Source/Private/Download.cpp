@@ -8,7 +8,7 @@
 
 #define LOCTEXT_NAMESPACE "ChunkDownloaderCustom"
 
-FDownload::FDownload(const TSharedRef<FChunkDownloader>& DownloaderIn, const TSharedRef<FChunkDownloader::FPakFileRecord>& PakFileIn)
+FDownloadChunk::FDownloadChunk(const TSharedRef<FChunkDownloaderCustom>& DownloaderIn, const TSharedRef<FChunkDownloaderCustom::FPakFileRecord>& PakFileIn)
 	: Downloader(DownloaderIn)
 	, PakFile(PakFileIn)
 	, TargetFile(Downloader->CacheFolder / PakFileIn->Entry.FileName)
@@ -19,20 +19,20 @@ FDownload::FDownload(const TSharedRef<FChunkDownloader>& DownloaderIn, const TSh
 	check(!PakFile->bIsMounted);
 }
 
-FDownload::~FDownload()
+FDownloadChunk::~FDownloadChunk()
 {
 }
 
-void FDownload::Start()
+void FDownloadChunk::Start()
 {
 	check(!bHasCompleted);
 
 	// check to make sure we have enough space for this download
 	if (!HasDeviceSpaceRequired())
 	{
-		TWeakPtr<FDownload> WeakThisPtr = AsShared();
+		TWeakPtr<FDownloadChunk> WeakThisPtr = AsShared();
 		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThisPtr](float Unused) {
-			TSharedPtr<FDownload> SharedThis = WeakThisPtr.Pin();
+			TSharedPtr<FDownloadChunk> SharedThis = WeakThisPtr.Pin();
 			if (SharedThis.IsValid())
 			{
 				SharedThis->OnCompleted(false, LOCTEXT("NotEnoughSpace", "Not enough space on device."));
@@ -46,7 +46,7 @@ void FDownload::Start()
 	StartDownload(0);
 }
 
-void FDownload::Cancel(bool bResult)
+void FDownloadChunk::Cancel(bool bResult)
 {
 	check(!bHasCompleted);
 	UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Canceling download of '%s'. result=%s"), *PakFile->Entry.FileName, bResult ? TEXT("true") : TEXT("false"));
@@ -62,14 +62,14 @@ void FDownload::Cancel(bool bResult)
 	OnCompleted(bResult, FText::Format(LOCTEXT("DownloadCanceled", "Download of '%s' was canceled."), FText::FromString(PakFile->Entry.FileName)));
 }
 
-void FDownload::UpdateFileSize()
+void FDownloadChunk::UpdateFileSize()
 {
 	IFileManager& FileManager = IFileManager::Get();
 	int64 FileSizeOnDisk = FileManager.FileSize(*TargetFile);
 	PakFile->SizeOnDisk = (FileSizeOnDisk > 0) ? (uint64)FileSizeOnDisk : 0;
 }
 
-bool FDownload::ValidateFile() const
+bool FDownloadChunk::ValidateFile() const
 {
 	if (PakFile->SizeOnDisk != PakFile->Entry.FileSize)
 	{
@@ -80,7 +80,7 @@ bool FDownload::ValidateFile() const
 	if (PakFile->Entry.FileVersion.StartsWith(TEXT("SHA1:")))
 	{
 		// check the sha1 hash
-		if (!FChunkDownloader::CheckFileSha1Hash(TargetFile, PakFile->Entry.FileVersion))
+		if (!FChunkDownloaderCustom::CheckFileSha1Hash(TargetFile, PakFile->Entry.FileVersion))
 		{
 			UE_LOG(LogChunkDownloaderCustom, Error, TEXT("Checksum mismatch. Expected %s"), *PakFile->Entry.FileVersion);
 			return false;
@@ -90,7 +90,7 @@ bool FDownload::ValidateFile() const
 	return true;
 }
 
-bool FDownload::HasDeviceSpaceRequired() const
+bool FDownloadChunk::HasDeviceSpaceRequired() const
 {
 	uint64 TotalDiskSpace = 0;
 	uint64 TotalDiskFreeSpace = 0;
@@ -108,7 +108,7 @@ bool FDownload::HasDeviceSpaceRequired() const
 	return true;
 }
 
-void FDownload::StartDownload(int TryNumber)
+void FDownloadChunk::StartDownload(int TryNumber)
 {
 	// only handle completion once
 	check(!bHasCompleted);
@@ -119,15 +119,15 @@ void FDownload::StartDownload(int TryNumber)
 	check(Downloader->BuildBaseUrls.Num() > 0);
 	FString Url = Downloader->BuildBaseUrls[TryNumber % Downloader->BuildBaseUrls.Num()] / PakFile->Entry.RelativeUrl;
 	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Downloading %s from %s"), *PakFile->Entry.FileName, *Url);
-	TWeakPtr<FDownload> WeakThisPtr = AsShared();
-	CancelCallback = PlatformStreamDownload(Url, TargetFile, [WeakThisPtr](int32 BytesReceived) {
-		TSharedPtr<FDownload> SharedThis = WeakThisPtr.Pin();
+	TWeakPtr<FDownloadChunk> WeakThisPtr = AsShared();
+	CancelCallback = PlatformStreamDownloadChunk(Url, TargetFile, [WeakThisPtr](int32 BytesReceived) {
+		TSharedPtr<FDownloadChunk> SharedThis = WeakThisPtr.Pin();
 		if (SharedThis.IsValid() && !SharedThis->bHasCompleted)
 		{
 			SharedThis->OnDownloadProgress(BytesReceived);
 		}
 	}, [WeakThisPtr, TryNumber, Url](int32 HttpStatus) {
-		TSharedPtr<FDownload> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FDownloadChunk> SharedThis = WeakThisPtr.Pin();
 		if (SharedThis.IsValid() && !SharedThis->bHasCompleted)
 		{
 			SharedThis->OnDownloadComplete(Url, TryNumber, HttpStatus);
@@ -135,14 +135,14 @@ void FDownload::StartDownload(int TryNumber)
 	});
 }
 
-void FDownload::OnDownloadProgress(int32 BytesReceived)
+void FDownloadChunk::OnDownloadProgress(int32 BytesReceived)
 {
 	Downloader->LoadingModeStats.BytesDownloaded -= LastBytesReceived;
 	LastBytesReceived = BytesReceived;
 	Downloader->LoadingModeStats.BytesDownloaded += LastBytesReceived;
 }
 
-void FDownload::OnDownloadComplete(const FString& Url, int TryNumber, int32 HttpStatus)
+void FDownloadChunk::OnDownloadComplete(const FString& Url, int TryNumber, int32 HttpStatus)
 {
 	// only handle completion once
 	check(!bHasCompleted);
@@ -188,9 +188,9 @@ void FDownload::OnDownloadComplete(const FString& Url, int TryNumber, int32 Http
 
 	// set a ticker to delay
 	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Will re-attempt to download %s in %f seconds"), *PakFile->Entry.FileName, SecondsToDelay);
-	TWeakPtr<FDownload> WeakThisPtr = AsShared();
+	TWeakPtr<FDownloadChunk> WeakThisPtr = AsShared();
 	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThisPtr, TryNumber](float Unused) {
-		TSharedPtr<FDownload> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FDownloadChunk> SharedThis = WeakThisPtr.Pin();
 		if (SharedThis.IsValid() && !SharedThis->bHasCompleted)
 		{
 			SharedThis->StartDownload(TryNumber + 1);
@@ -199,7 +199,7 @@ void FDownload::OnDownloadComplete(const FString& Url, int TryNumber, int32 Http
 	}), SecondsToDelay);
 }
 
-void FDownload::OnCompleted(bool bSuccess, const FText& ErrorText)
+void FDownloadChunk::OnCompleted(bool bSuccess, const FText& ErrorText)
 {
 	// make sure we don't complete more than once
 	check(!bHasCompleted);

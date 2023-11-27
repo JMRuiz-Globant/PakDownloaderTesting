@@ -7,7 +7,7 @@
 
 DEFINE_LOG_CATEGORY(LogChunkDownloaderCustom);
 
-class FChunkDownloaderPlatformWrapper : public FGenericPlatformChunkInstall
+class FChunkDownloaderCustomPlatformWrapper : public FGenericPlatformChunkInstall
 {
 public:
 	virtual EChunkLocation::Type GetChunkLocation(uint32 ChunkID) override
@@ -44,7 +44,7 @@ public:
 		{
 			return false;
 		}
-		ChunkDownloader->MountChunk(ChunkID, FChunkDownloader::FCallback());
+		ChunkDownloader->MountChunk(ChunkID, FChunkDownloaderCustom::FCallback());
 		return true;
 	}
 
@@ -53,7 +53,7 @@ public:
 		// create if necessary
 		if (!ChunkDownloader.IsValid())
 		{
-			ChunkDownloader = MakeShareable(new FChunkDownloader());
+			ChunkDownloader = MakeShareable(new FChunkDownloaderCustom());
 		}
 		return ChunkDownloader->OnChunkMounted.Add(Delegate);
 	}
@@ -75,15 +75,15 @@ public: // trivial
 	virtual float GetChunkProgress(uint32 ChunkID, EChunkProgressReportingType::Type ReportType) override { return 0; }
 
 public:
-	FChunkDownloaderPlatformWrapper(TSharedPtr<FChunkDownloader>& ChunkDownloaderRef)
+	FChunkDownloaderCustomPlatformWrapper(TSharedPtr<FChunkDownloaderCustom>& ChunkDownloaderRef)
 		: ChunkDownloader(ChunkDownloaderRef)
 	{
 	}
-	virtual ~FChunkDownloaderPlatformWrapper()
+	virtual ~FChunkDownloaderCustomPlatformWrapper()
 	{
 	}
 private:
-	TSharedPtr<FChunkDownloader>& ChunkDownloader;
+	TSharedPtr<FChunkDownloaderCustom>& ChunkDownloader;
 };
 
 // Mcp Profile System Module
@@ -91,7 +91,7 @@ class FChunkDownloaderCustomModule : public IPlatformChunkInstallModule
 {
 public:
 	FChunkDownloaderCustomModule()
-		: ChunkInstallWrapper(new FChunkDownloaderPlatformWrapper(ChunkDownloader))
+		: ChunkInstallWrapper(new FChunkDownloaderCustomPlatformWrapper(ChunkDownloader))
 	{
 	}
 
@@ -113,14 +113,14 @@ public:
 		}
 	}
 
-	TSharedPtr<FChunkDownloader> ChunkDownloader;
-	TUniquePtr<FChunkDownloaderPlatformWrapper> ChunkInstallWrapper;
+	TSharedPtr<FChunkDownloaderCustom> ChunkDownloader;
+	TUniquePtr<FChunkDownloaderCustomPlatformWrapper> ChunkInstallWrapper;
 };
 
 static const FName ChunkDownloaderCustomModuleName = "ChunkDownloaderCustom";
 
 //static 
-TSharedPtr<FChunkDownloader> FChunkDownloader::Get()
+TSharedPtr<FChunkDownloaderCustom> FChunkDownloaderCustom::Get()
 {
 	FChunkDownloaderCustomModule* Module = FModuleManager::LoadModulePtr<FChunkDownloaderCustomModule>(ChunkDownloaderCustomModuleName);
 	if (Module != nullptr)
@@ -128,29 +128,29 @@ TSharedPtr<FChunkDownloader> FChunkDownloader::Get()
 		// may still be null
 		return Module->ChunkDownloader;
 	}
-	return TSharedPtr<FChunkDownloader>();
+	return TSharedPtr<FChunkDownloaderCustom>();
 }
 
 //static 
-TSharedRef<FChunkDownloader> FChunkDownloader::GetChecked()
+TSharedRef<FChunkDownloaderCustom> FChunkDownloaderCustom::GetChecked()
 {
 	FChunkDownloaderCustomModule& Module = FModuleManager::LoadModuleChecked<FChunkDownloaderCustomModule>(ChunkDownloaderCustomModuleName);
 	return Module.ChunkDownloader.ToSharedRef();
 }
 
 //static 
-TSharedRef<FChunkDownloader> FChunkDownloader::GetOrCreate()
+TSharedRef<FChunkDownloaderCustom> FChunkDownloaderCustom::GetOrCreate()
 {
 	FChunkDownloaderCustomModule& Module = FModuleManager::LoadModuleChecked<FChunkDownloaderCustomModule>(ChunkDownloaderCustomModuleName);
 	if (!Module.ChunkDownloader.IsValid())
 	{
-		Module.ChunkDownloader = MakeShareable(new FChunkDownloader());
+		Module.ChunkDownloader = MakeShareable(new FChunkDownloaderCustom());
 	}
 	return Module.ChunkDownloader.ToSharedRef();
 }
 
 //static 
-void FChunkDownloader::Shutdown()
+void FChunkDownloaderCustom::Shutdown()
 {
 	FChunkDownloaderCustomModule* Module = FModuleManager::LoadModulePtr<FChunkDownloaderCustomModule>(ChunkDownloaderCustomModuleName);
 	if (Module != nullptr)

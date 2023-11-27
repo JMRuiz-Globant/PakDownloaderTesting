@@ -15,7 +15,7 @@
 // Android
 // https://developer.android.com/reference/android/app/DownloadManager.html
 #error "TODO: android"
-FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
+FDownloadCancel PlatformStreamDownloadChunk(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
 {
 	// TODO: write me
 	Callback(0);
@@ -29,7 +29,7 @@ FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& Target
 // iOS
 // https://developer.apple.com/library/content/documentation/iPhone/Conceptual/iPhoneOSProgrammingGuide/BackgroundExecution/BackgroundExecution.html
 #error "TODO: ios"
-FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
+FDownloadCancel PlatformStreamDownloadChunk(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
 {
 	// TODO: write me
 	Callback(0);
@@ -42,7 +42,7 @@ FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& Target
 
 // NOTE: this implementation does not stream the file, it loads the whole thing into memory
 // then saves it (not optimal). It does attempt to resume interrupted downloads (for use in testing), but since it doesn't do partial writes, those probably won't occur in the wild.
-FDownloadCancel PlatformStreamDownload(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
+FDownloadCancel PlatformStreamDownloadChunk(const FString& Url, const FString& TargetFile, const FDownloadProgress& Progress, const FDownloadComplete& Callback)
 {
 	// how much of the file do we currently have on disk (if any)
 	IFileManager& FileManager = IFileManager::Get();

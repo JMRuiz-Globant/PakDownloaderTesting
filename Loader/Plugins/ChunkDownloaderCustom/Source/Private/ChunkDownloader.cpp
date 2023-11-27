@@ -28,7 +28,7 @@ static const FString BUILD_ID_KEY = TEXT("BUILD_ID");
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-class FChunkDownloader::FMultiCallback
+class FChunkDownloaderCustom::FMultiCallback
 {
 public:
 	FMultiCallback(const FCallback& Callback)
@@ -83,7 +83,11 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-class FChunkDownloader::FPakMountWork : public FNonAbandonableTask
+FChunkDownloaderCustom::FPakMountWorkResult::FPakMountWorkResult(FPakFile* Pak) 
+	: Pak(Pak) 
+{}
+
+class FChunkDownloaderCustom::FPakMountWork : public FNonAbandonableTask
 {
 public:
 	friend class FAsyncTask<FPakMountWork>;
@@ -171,17 +175,17 @@ public: // results
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-FChunkDownloader::FChunkDownloader()
+FChunkDownloaderCustom::FChunkDownloaderCustom()
 {
 }
 
-FChunkDownloader::~FChunkDownloader()
+FChunkDownloaderCustom::~FChunkDownloaderCustom()
 {
 	// this will be true unless we forgot to have Finalize called.
 	check(PakFiles.Num() <= 0);
 }
 
-void FChunkDownloader::Initialize(const FString& InPlatformName, int32 TargetDownloadsInFlightIn)
+void FChunkDownloaderCustom::Initialize(const FString& InPlatformName, int32 TargetDownloadsInFlightIn)
 {
 	check(PakFiles.Num() == 0); // this means we didn't call Finalize
 	check(!InPlatformName.IsEmpty());
@@ -285,7 +289,7 @@ void FChunkDownloader::Initialize(const FString& InPlatformName, int32 TargetDow
 	SaveLocalManifest(false);
 }
 
-bool FChunkDownloader::LoadCachedBuild(const FString& DeploymentName)
+bool FChunkDownloaderCustom::LoadCachedBuild(const FString& DeploymentName)
 {
 	// try to re-populate ContentBuildId and the cached manifest
 	TMap<FString, FString> CachedManifestProps;
@@ -301,7 +305,7 @@ bool FChunkDownloader::LoadCachedBuild(const FString& DeploymentName)
 	return true;
 }
 
-void FChunkDownloader::SetContentBuildId(const FString& DeploymentName, const FString& NewContentBuildId)
+void FChunkDownloaderCustom::SetContentBuildId(const FString& DeploymentName, const FString& NewContentBuildId)
 {
 	// save the content build id
 	ContentBuildId = NewContentBuildId;
@@ -349,7 +353,7 @@ void FChunkDownloader::SetContentBuildId(const FString& DeploymentName, const FS
 	}
 }
 
-void FChunkDownloader::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildIdIn, const FCallback& Callback)
+void FChunkDownloaderCustom::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildIdIn, const FCallback& Callback)
 {
 	check(!ContentBuildIdIn.IsEmpty());
 
@@ -370,7 +374,7 @@ void FChunkDownloader::UpdateBuild(const FString& DeploymentName, const FString&
 	TryLoadBuildManifest(0);
 }
 
-void FChunkDownloader::Finalize()
+void FChunkDownloaderCustom::Finalize()
 {
 	UE_LOG(LogChunkDownloaderCustom, Display, TEXT("Finalizing."));
 
@@ -442,7 +446,7 @@ void FChunkDownloader::Finalize()
 	ContentBuildId.Empty();
 }
 
-void FChunkDownloader::SaveLocalManifest(bool bForce)
+void FChunkDownloaderCustom::SaveLocalManifest(bool bForce)
 {
 	if (bForce || bNeedsManifestSave)
 	{
@@ -489,7 +493,7 @@ void FChunkDownloader::SaveLocalManifest(bool bForce)
 	}
 }
 
-void FChunkDownloader::WaitForMounts()
+void FChunkDownloaderCustom::WaitForMounts()
 {
 	bool bWaiting = false;
 
@@ -519,7 +523,7 @@ void FChunkDownloader::WaitForMounts()
 	}
 }
 
-void FChunkDownloader::CancelDownload(const TSharedRef<FPakFileRecord>& PakFile, bool bResult)
+void FChunkDownloaderCustom::CancelDownload(const TSharedRef<FPakFileRecord>& PakFile, bool bResult)
 {
 	if (PakFile->Download.IsValid())
 	{
@@ -529,7 +533,7 @@ void FChunkDownloader::CancelDownload(const TSharedRef<FPakFileRecord>& PakFile,
 	}
 }
 
-void FChunkDownloader::UnmountPakFile(const TSharedRef<FPakFileRecord>& PakFile)
+void FChunkDownloaderCustom::UnmountPakFile(const TSharedRef<FPakFileRecord>& PakFile)
 {
 	// if it's already unmounted, don't do anything
 	if (PakFile->bIsMounted)
@@ -566,7 +570,7 @@ void FChunkDownloader::UnmountPakFile(const TSharedRef<FPakFileRecord>& PakFile)
 	}
 }
 
-EChunkStatus FChunkDownloader::GetChunkStatus(int32 ChunkId) const
+EChunkStatus FChunkDownloaderCustom::GetChunkStatus(int32 ChunkId) const
 {
 	// do we know about this chunk at all?
 	const TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -622,17 +626,17 @@ EChunkStatus FChunkDownloader::GetChunkStatus(int32 ChunkId) const
 	return EChunkStatus::Remote;
 }
 
-void FChunkDownloader::GetAllChunkIds(TArray<int32>& OutChunkIds) const
+void FChunkDownloaderCustom::GetAllChunkIds(TArray<int32>& OutChunkIds) const
 {
 	Chunks.GetKeys(OutChunkIds);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-void FChunkDownloader::DumpLoadedChunks()
+void FChunkDownloaderCustom::DumpLoadedChunks()
 {
 #if !WITH_EDITOR
-	TSharedRef<FChunkDownloader> ChunkDownloader = FChunkDownloader::GetChecked();
+	TSharedRef<FChunkDownloaderCustom> ChunkDownloader = FChunkDownloaderCustom::GetChecked();
 
 	TArray<int32> ChunkIdList;
 	ChunkDownloader->GetAllChunkIds(ChunkIdList);
@@ -646,7 +650,7 @@ void FChunkDownloader::DumpLoadedChunks()
 #endif
 }
 
-const TCHAR* FChunkDownloader::ChunkStatusToString(EChunkStatus Status)
+const TCHAR* FChunkDownloaderCustom::ChunkStatusToString(EChunkStatus Status)
 {
 	switch (Status)
 	{
@@ -660,7 +664,7 @@ const TCHAR* FChunkDownloader::ChunkStatusToString(EChunkStatus Status)
 	}
 }
 
-bool FChunkDownloader::WriteStringAsUtf8TextFile(const FString& FileText, const FString& FilePath)
+bool FChunkDownloaderCustom::WriteStringAsUtf8TextFile(const FString& FileText, const FString& FilePath)
 {
 	// convert to UTF8
 	FTCHARToUTF8 PakFileUtf8(*FileText);
@@ -691,7 +695,7 @@ bool FChunkDownloader::WriteStringAsUtf8TextFile(const FString& FileText, const 
 	return bSuccess;
 }
 
-bool FChunkDownloader::CheckFileSha1Hash(const FString& FullPathOnDisk, const FString& Sha1HashStr)
+bool FChunkDownloaderCustom::CheckFileSha1Hash(const FString& FullPathOnDisk, const FString& Sha1HashStr)
 {
 	IFileHandle* FilePtr = IPlatformFile::GetPlatformPhysical().OpenRead(*FullPathOnDisk);
 	if (FilePtr == nullptr)
@@ -750,7 +754,7 @@ bool FChunkDownloader::CheckFileSha1Hash(const FString& FullPathOnDisk, const FS
 	return Sha1HashStr == LocalHashStr;
 }
 
-TArray<FPakManifestEntry> FChunkDownloader::ParseManifest(const FString& ManifestPath, TMap<FString, FString>* Properties)
+TArray<FPakManifestEntry> FChunkDownloaderCustom::ParseManifest(const FString& ManifestPath, TMap<FString, FString>* Properties)
 {
 	int32 ExpectedEntries = -1;
 	TArray<FPakManifestEntry> Entries;
@@ -895,14 +899,14 @@ TArray<FPakManifestEntry> FChunkDownloader::ParseManifest(const FString& Manifes
 	return Entries;
 }
 
-FString FChunkDownloader::GetRootDir(const FString& MountPoint)
+FString FChunkDownloaderCustom::GetRootDir(const FString& MountPoint)
 {
 	FString RootDir;
 	verify(FPackageName::TryConvertFilenameToLongPackageName(MountPoint, RootDir));
 	return RootDir;
 }
 
-bool FChunkDownloader::IsMountingToRoot(const FString& MountPoint)
+bool FChunkDownloaderCustom::IsMountingToRoot(const FString& MountPoint)
 {
 	FString NormalizedPakMountPoint = FPaths::CreateStandardFilename(MountPoint);
 	bool bIsMountingToRoot = NormalizedPakMountPoint == FPaths::CreateStandardFilename(FPaths::RootDir());
@@ -912,13 +916,13 @@ bool FChunkDownloader::IsMountingToRoot(const FString& MountPoint)
 	return bIsMountingToRoot;
 }
 
-bool FChunkDownloader::IsMountPointRegistered(const FString& MountPoint)
+bool FChunkDownloaderCustom::IsMountPointRegistered(const FString& MountPoint)
 {
 	FString RootDir;
 	return FPackageName::TryConvertFilenameToLongPackageName(MountPoint, RootDir);
 }
 
-bool FChunkDownloader::ParseRootDir(const FString& MountPoint, FString& Result)
+bool FChunkDownloaderCustom::ParseRootDir(const FString& MountPoint, FString& Result)
 {
 	// NOTE: Mount point should be relative to "/Engine/Binaries/Platform/", as "../../../".
 	// NOTE: The comments below are examples to keep track of how the string parsing should be going along.
@@ -1022,7 +1026,7 @@ bool FChunkDownloader::ParseRootDir(const FString& MountPoint, FString& Result)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-int32 FChunkDownloader::FlushCache()
+int32 FChunkDownloaderCustom::FlushCache()
 {
 	IFileManager& FileManager = IFileManager::Get();
 
@@ -1098,7 +1102,7 @@ int32 FChunkDownloader::FlushCache()
 	return FilesSkipped;
 }
 
-int32 FChunkDownloader::ValidateCache()
+int32 FChunkDownloaderCustom::ValidateCache()
 {
 	IFileManager& FileManager = IFileManager::Get();
 
@@ -1160,7 +1164,7 @@ int32 FChunkDownloader::ValidateCache()
 	return InvalidFiles;
 }
 
-void FChunkDownloader::BeginLoadingMode(const FCallback& Callback)
+void FChunkDownloaderCustom::BeginLoadingMode(const FCallback& Callback)
 {
 	check(Callback); // you can't start loading mode without a valid callback
 
@@ -1193,9 +1197,9 @@ void FChunkDownloader::BeginLoadingMode(const FCallback& Callback)
 	LoadingCompleteLatch = 0;
 
 	// compute again next frame (if nothing's queued by then, we'll fire the callback
-	TWeakPtr<FChunkDownloader> WeakThisPtr = AsShared();
+	TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThisPtr](float dts) {
-		TSharedPtr<FChunkDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FChunkDownloaderCustom> SharedThis = WeakThisPtr.Pin();
 		if (!SharedThis.IsValid() || SharedThis->PostLoadCallbacks.Num() <= 0)
 		{
 			return false; // stop ticking
@@ -1204,7 +1208,7 @@ void FChunkDownloader::BeginLoadingMode(const FCallback& Callback)
 	}));
 }
 
-bool FChunkDownloader::GetChunkContent(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly) const
+bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly) const
 {
 	// look up the chunk
 	const TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -1255,7 +1259,7 @@ bool FChunkDownloader::GetChunkContent(int32 ChunkId, TArray<FString>& Content, 
 	return Content.Num() > 0;
 }
 
-bool FChunkDownloader::GetChunkContent(int32 ChunkId, const TSubclassOf<UObject>& Class, TArray<TSoftObjectPtr<UObject>>& Content) const
+bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, const TSubclassOf<UObject>& Class, TArray<TSoftObjectPtr<UObject>>& Content) const
 {
 	// look up the chunk
 	const TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -1354,7 +1358,7 @@ bool FChunkDownloader::GetChunkContent(int32 ChunkId, const TSubclassOf<UObject>
 	return Content.Num() > 0;
 }
 
-bool FChunkDownloader::UpdateLoadingMode()
+bool FChunkDownloaderCustom::UpdateLoadingMode()
 {
 	// recompute loading stats
 	ComputeLoadingStats();
@@ -1396,7 +1400,7 @@ bool FChunkDownloader::UpdateLoadingMode()
 	return true; // keep ticking
 }
 
-void FChunkDownloader::ComputeLoadingStats()
+void FChunkDownloaderCustom::ComputeLoadingStats()
 {
 	LoadingModeStats.TotalBytesToDownload = LoadingModeStats.BytesDownloaded;
 	LoadingModeStats.TotalFilesToDownload = LoadingModeStats.FilesDownloaded;
@@ -1429,7 +1433,7 @@ void FChunkDownloader::ComputeLoadingStats()
 	}
 }
 
-void FChunkDownloader::ExecuteNextTick(const FCallback& Callback, bool bSuccess)
+void FChunkDownloaderCustom::ExecuteNextTick(const FCallback& Callback, bool bSuccess)
 {
 	if (Callback)
 	{
@@ -1440,7 +1444,7 @@ void FChunkDownloader::ExecuteNextTick(const FCallback& Callback, bool bSuccess)
 	}
 }
 
-void FChunkDownloader::TryLoadBuildManifest(int32 TryNumber)
+void FChunkDownloaderCustom::TryLoadBuildManifest(int32 TryNumber)
 {
 	// load the local build manifest
 	TMap<FString, FString> CachedManifestProps;
@@ -1478,9 +1482,9 @@ void FChunkDownloader::TryLoadBuildManifest(int32 TryNumber)
 
 		// set a ticker to delay
 		UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Will re-attempt manifest download in %f seconds"), SecondsToDelay);
-		TWeakPtr<FChunkDownloader> WeakThisPtr = AsShared();
+		TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThisPtr, TryNumber](float Unused) {
-			TSharedPtr<FChunkDownloader> SharedThis = WeakThisPtr.Pin();
+			TSharedPtr<FChunkDownloaderCustom> SharedThis = WeakThisPtr.Pin();
 			if (SharedThis.IsValid())
 			{
 				SharedThis->TryDownloadBuildManifest(TryNumber);
@@ -1498,7 +1502,7 @@ void FChunkDownloader::TryLoadBuildManifest(int32 TryNumber)
 	ExecuteNextTick(Callback, true);
 }
 
-void FChunkDownloader::TryDownloadBuildManifest(int32 TryNumber)
+void FChunkDownloaderCustom::TryDownloadBuildManifest(int32 TryNumber)
 {
 	check(BuildBaseUrls.Num() > 0);
 
@@ -1513,7 +1517,7 @@ void FChunkDownloader::TryDownloadBuildManifest(int32 TryNumber)
 	ManifestRequest = HttpModule.Get().CreateRequest();
 	ManifestRequest->SetURL(Url);
 	ManifestRequest->SetVerb(TEXT("GET"));
-	TWeakPtr<FChunkDownloader> WeakThisPtr = AsShared();
+	TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 	FString CachedManifestFullPath = CacheFolder / CACHED_BUILD_MANIFEST;
 	ManifestRequest->OnProcessRequestComplete().BindLambda([WeakThisPtr, TryNumber, CachedManifestFullPath](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSuccess) {
 		// if successful, save
@@ -1543,7 +1547,7 @@ void FChunkDownloader::TryDownloadBuildManifest(int32 TryNumber)
 		}
 
 		// try to load it
-		TSharedPtr<FChunkDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FChunkDownloaderCustom> SharedThis = WeakThisPtr.Pin();
 		if (!SharedThis.IsValid())
 		{
 			UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("FChunkDownloaderCustom was destroyed while downloading manifest '%s'"), *HttpRequest->GetURL());
@@ -1557,7 +1561,7 @@ void FChunkDownloader::TryDownloadBuildManifest(int32 TryNumber)
 }
 
 
-void FChunkDownloader::LoadManifest(const TArray<FPakManifestEntry>& ManifestPakFiles)
+void FChunkDownloaderCustom::LoadManifest(const TArray<FPakManifestEntry>& ManifestPakFiles)
 {
 
 
@@ -1739,7 +1743,7 @@ void FChunkDownloader::LoadManifest(const TArray<FPakManifestEntry>& ManifestPak
 	UE_LOG(LogChunkDownloaderCustom, Display, TEXT("Manifest load complete. %d chunks with %d pak files."), NumChunks, NumPaks);
 }
 
-void FChunkDownloader::DownloadChunkInternal(const FChunk& Chunk, const FCallback& Callback, int32 Priority)
+void FChunkDownloaderCustom::DownloadChunkInternal(const FChunk& Chunk, const FCallback& Callback, int32 Priority)
 {
 	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Chunk %d download requested."), Chunk.ChunkId);
 
@@ -1779,7 +1783,7 @@ void FChunkDownloader::DownloadChunkInternal(const FChunk& Chunk, const FCallbac
 	check(MultiCallback->GetNumPending() > 0);
 } //-V773
 
-void FChunkDownloader::MountChunkInternal(FChunk& Chunk, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& Callback)
 {
 	check(!Chunk.bIsMounted);
 
@@ -1837,19 +1841,19 @@ void FChunkDownloader::MountChunkInternal(FChunk& Chunk, const FCallback& Callba
 		// start a per-frame ticker until mounts are finished
 		if (!MountTicker.IsValid())
 		{
-			MountTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &FChunkDownloader::UpdateMountTasks));
+			MountTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &FChunkDownloaderCustom::UpdateMountTasks));
 		}
 	}
 	else
 	{
 		// queue up pak file downloads
-		TWeakPtr<FChunkDownloader> WeakThisPtr = AsShared();
+		TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 		int32 ChunkId = Chunk.ChunkId;
 		DownloadChunkInternal(Chunk, [WeakThisPtr, ChunkId, Callback](bool bDownloadSuccess) {
 			// if the download failed, we can't mount
 			if (bDownloadSuccess)
 			{
-				TSharedPtr<FChunkDownloader> SharedThis = WeakThisPtr.Pin();
+				TSharedPtr<FChunkDownloaderCustom> SharedThis = WeakThisPtr.Pin();
 				if (SharedThis.IsValid())
 				{
 					// if all chunks are downloaded, do the mount again (this will pick up any changes and continue downloading if needed)
@@ -1867,7 +1871,7 @@ void FChunkDownloader::MountChunkInternal(FChunk& Chunk, const FCallback& Callba
 	}
 }
 
-void FChunkDownloader::DownloadPakFileInternal(const TSharedRef<FPakFileRecord>& PakFile, const FCallback& Callback, int32 Priority)
+void FChunkDownloaderCustom::DownloadPakFileInternal(const TSharedRef<FPakFileRecord>& PakFile, const FCallback& Callback, int32 Priority)
 {
 	check(BuildBaseUrls.Num() > 0);
 
@@ -1901,7 +1905,7 @@ void FChunkDownloader::DownloadPakFileInternal(const TSharedRef<FPakFileRecord>&
 	IssueDownloads();
 }
 
-void FChunkDownloader::IssueDownloads()
+void FChunkDownloaderCustom::IssueDownloads()
 {
 	for (int32 i = 0; i < DownloadRequests.Num() && i < TargetDownloadsInFlight; ++i)
 	{
@@ -1920,12 +1924,12 @@ void FChunkDownloader::IssueDownloads()
 		bNeedsManifestSave = true;
 
 		// make a new download (platform specific)
-		DownloadPakFile->Download = MakeShared<FDownload>(AsShared(), DownloadPakFile);
+		DownloadPakFile->Download = MakeShared<FDownloadChunk>(AsShared(), DownloadPakFile);
 		DownloadPakFile->Download->Start();
 	}
 }
 
-void FChunkDownloader::CompleteMountTask(FChunk& Chunk)
+void FChunkDownloaderCustom::CompleteMountTask(FChunk& Chunk)
 {
 	check(Chunk.MountTask != nullptr);
 	check(Chunk.MountTask->IsDone());
@@ -1990,7 +1994,7 @@ void FChunkDownloader::CompleteMountTask(FChunk& Chunk)
 	ComputeLoadingStats();
 }
 
-bool FChunkDownloader::UpdateMountTasks(float dts)
+bool FChunkDownloaderCustom::UpdateMountTasks(float dts)
 {
 	bool bMountsPending = false;
 
@@ -2019,7 +2023,7 @@ bool FChunkDownloader::UpdateMountTasks(float dts)
 	return bMountsPending; // keep ticking
 }
 
-void FChunkDownloader::DownloadChunk(int32 ChunkId, const FCallback& Callback, int32 Priority)
+void FChunkDownloaderCustom::DownloadChunk(int32 ChunkId, const FCallback& Callback, int32 Priority)
 {
 	// look up the chunk
 	TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -2048,7 +2052,7 @@ void FChunkDownloader::DownloadChunk(int32 ChunkId, const FCallback& Callback, i
 	ComputeLoadingStats();
 }
 
-void FChunkDownloader::DownloadChunks(const TArray<int32>& ChunkIds, const FCallback& Callback, int32 Priority)
+void FChunkDownloaderCustom::DownloadChunks(const TArray<int32>& ChunkIds, const FCallback& Callback, int32 Priority)
 {
 	// convert to chunk references
 	TArray<TSharedRef<FChunk>> ChunksToDownload;
@@ -2105,7 +2109,7 @@ void FChunkDownloader::DownloadChunks(const TArray<int32>& ChunkIds, const FCall
 	ComputeLoadingStats();
 }
 
-void FChunkDownloader::MountChunk(int32 ChunkId, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunk(int32 ChunkId, const FCallback& Callback)
 {
 	// look up the chunk
 	TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -2135,7 +2139,7 @@ void FChunkDownloader::MountChunk(int32 ChunkId, const FCallback& Callback)
 	ComputeLoadingStats();
 }
 
-void FChunkDownloader::MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback)
 {
 	// convert to chunk references
 	TArray<TSharedRef<FChunk>> ChunksToMount;

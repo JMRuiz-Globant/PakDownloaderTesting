@@ -5,11 +5,11 @@
 #include "ChunkDownloader.h"
 #include "PlatformStreamDownload.h"
 
-class FDownload : public TSharedFromThis<FDownload>
+class FDownloadChunk : public TSharedFromThis<FDownloadChunk>
 {
 public:
-	FDownload(const TSharedRef<FChunkDownloader>& DownloaderIn, const TSharedRef<FChunkDownloader::FPakFileRecord>& PakFileIn);
-	virtual ~FDownload();
+	FDownloadChunk(const TSharedRef<FChunkDownloaderCustom>& DownloaderIn, const TSharedRef<FChunkDownloaderCustom::FPakFileRecord>& PakFileIn);
+	virtual ~FDownloadChunk();
 
 	inline bool HasCompleted() const { return bHasCompleted; }
 	inline int32 GetProgress() const { return LastBytesReceived; }
@@ -18,8 +18,8 @@ public:
 	void Cancel(bool bResult);
 
 public:
-	const TSharedRef<FChunkDownloader> Downloader;
-	const TSharedRef<FChunkDownloader::FPakFileRecord> PakFile;
+	const TSharedRef<FChunkDownloaderCustom> Downloader;
+	const TSharedRef<FChunkDownloaderCustom::FPakFileRecord> PakFile;
 	const FString TargetFile;
 
 protected:
