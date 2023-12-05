@@ -3,6 +3,13 @@
 	"EngineAssociation": "{5FD3D766-4317-FE8D-6E43-33A1AF09E0B5}",
 	"Category": "",
 	"Description": "",
+	"Modules": [
+		{
+			"Name": "PakMap",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
 	"Plugins": [
 		{
 			"Name": "ModelingToolsEditorMode",
