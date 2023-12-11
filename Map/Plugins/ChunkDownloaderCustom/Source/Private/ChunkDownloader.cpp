@@ -201,6 +201,7 @@ public: // inputs
 
 	int32 ChunkId;
 	bool bIsUnmountTask;
+	bool bPreScanAssets;
 
 	// folders to save pak files into on disk
 	FString CacheFolder;
@@ -398,7 +399,7 @@ void FChunkDownloaderCustom::SetContentBuildId(const FString& DeploymentName, co
 	}
 }
 
-void FChunkDownloaderCustom::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildIdIn, const FCallback& Callback)
+void FChunkDownloaderCustom::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildIdIn, const FCallback& Callback, bool bPreloadCachedBuild)
 {
 	check(!ContentBuildIdIn.IsEmpty());
 
@@ -408,6 +409,13 @@ void FChunkDownloaderCustom::UpdateBuild(const FString& DeploymentName, const FS
 		ExecuteNextTick(Callback, true);
 		return;
 	}
+
+	// Preload cached data if needed.
+	if (bPreloadCachedBuild)
+	{
+		LoadCachedBuild(DeploymentName);
+	}
+
 	SetContentBuildId(DeploymentName, ContentBuildIdIn);
 
 	// no overlapped UpdateBuild calls allowed, and Callback is required
@@ -1255,15 +1263,22 @@ void FChunkDownloaderCustom::BeginLoadingMode(const FCallback& Callback)
 	}));
 }
 
-bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly) const
+bool FChunkDownloaderCustom::InspectChunkContent(int32 ChunkId, const TFunction<bool(const FString&, const FString&)>& Predicate, bool bCookedOnly) const
 {
+	// make sure predicate is valid
+	if (!Predicate)
+	{
+		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content inspection request for chunk %d (no predicate function provided)."), ChunkId);
+		return false;
+	}
+
 	// look up the chunk
 	const TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
 	if (ChunkPtr == nullptr || (*ChunkPtr)->PakFiles.Num() <= 0)
 	{
 		// a chunk that doesn't exist or one with no pak files are both considered "complete" for the purposes of this call
 		// use GetChunkStatus to differentiate from chunks that mounted successfully
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (no mapped pak files)."), ChunkId);
+		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content inspection request for chunk %d (no mapped pak files)."), ChunkId);
 		return false;
 	}
 	FChunk& Chunk = **ChunkPtr;
@@ -1271,84 +1286,20 @@ bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, TArray<FString>& Con
 	// see if we're mounted already
 	if (!Chunk.bIsMounted)
 	{
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (chunk is unmounted)."), ChunkId);
+		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content inspection request for chunk %d (chunk is unmounted)."), ChunkId);
 		return false;
 	}
 
 	// see if paks are registered as well.
 	if (!Chunk.IsRegistered())
 	{
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (chunk is unregistered)."), ChunkId);
+		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content inspection request for chunk %d (chunk is unregistered)."), ChunkId);
 		return false;
 	}
 
-	Content.Empty();
+	bool bResult = false;
 
-	// iterate through each pak file's contents and populate the output array.
-	for (TSharedRef<FPakFileRecord>& PakFile : Chunk.PakFiles)
-	{
-		if (PakFile->Pak.IsValid())
-		{
-			FPakFile* Pak	= PakFile->Pak.GetReference();
-			FString RootDir = GetRootDir(Pak->GetMountPoint());
-
-			// iterate through the pak file's contents and populate the output array.
-			for (FPakFile::FFilenameIterator File(*Pak); File; ++File)
-			{
-				static const TSet<FString> CookedFileTypes({ TEXT("uasset"), TEXT("umap") });
-				if (!bCookedOnly || CookedFileTypes.Contains(FPaths::GetExtension(File.Filename())))
-				{
-					Content.Add(RootDir / File.Filename());
-				}
-			}
-		}
-	}
-	return Content.Num() > 0;
-}
-
-bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, const TSubclassOf<UObject>& Class, TArray<TSoftObjectPtr<UObject>>& Content) const
-{
-	// look up the chunk
-	const TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
-	if (ChunkPtr == nullptr || (*ChunkPtr)->PakFiles.Num() <= 0)
-	{
-		// a chunk that doesn't exist or one with no pak files are both considered "complete" for the purposes of this call
-		// use GetChunkStatus to differentiate from chunks that mounted successfully
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (no mapped pak files)."), ChunkId);
-		return false;
-	}
-	FChunk& Chunk = **ChunkPtr;
-
-	// see if we're mounted already
-	if (!Chunk.bIsMounted)
-	{
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (chunk is unmounted)."), ChunkId);
-		return false;
-	}
-
-	// see if paks are registered as well.
-	if (!Chunk.IsRegistered())
-	{
-		UE_LOG(LogChunkDownloaderCustom, Warning, TEXT("Ignoring chunk content export request for chunk %d (chunk is unregistered)."), ChunkId);
-		return false;
-	}
-
-	Content.Empty();
-
-	// Scan the file path to make sure the asset does exist.
-	// This can be a costly task, but since we are scanning full paths to individual files, it shouldn't be that bad. 
-	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-
-	FARFilter Filter;
-
-	if (IsValid(Class))
-	{
-		Filter.ClassPaths.Add(FSoftClassPath(Class).GetAssetPath());
-		Filter.bRecursiveClasses = true;
-	}
-
-	TArray<FString> Paths;
-	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Parsing pak content"));
+	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Inspecting pak content"));
 	// iterate through each pak file's contents and populate the output array.
 	for (TSharedRef<FPakFileRecord>& PakFile : Chunk.PakFiles)
 	{
@@ -1360,25 +1311,47 @@ bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, const TSubclassOf<UO
 			for (FPakFile::FFilenameIterator File(*Pak); File; ++File)
 			{
 				static const TSet<FString> CookedFileTypes({ TEXT("uasset"), TEXT("umap") });
-				if (CookedFileTypes.Contains(FPaths::GetExtension(File.Filename())))
+				if (!bCookedOnly || CookedFileTypes.Contains(FPaths::GetExtension(File.Filename())))
 				{
+					bResult = true;
+					
 					FString Path = RootDir / File.Filename();
-					FString PackageName;
-					FPackageName::TryConvertToMountedPath(RootDir / File.Filename(), NULL, &PackageName, NULL, NULL, NULL);
-
-					Filter.PackageNames.Add(FName(PackageName));
-					Paths.Add(PackageName);
+					FString PackageStr;
+					FPackageName::TryConvertToMountedPath(RootDir / File.Filename(), NULL, &PackageStr, NULL, NULL, NULL);
+					if (!Predicate(PackageStr, Path))
+					{
+						break;
+					}
 				}
 			}
 		}
 	}
+	UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Pak content inspection done"));
+	return bResult;
+}
 
-	if (Paths.Num() > 0)
+int32 FChunkDownloaderCustom::ScanAssetsInChunk(int32 ChunkId) const
+{		
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	
+	TSet<FString> PackageStrings;
+	if (!InspectChunkContent(ChunkId, [&PackageStrings](const FString& PackageStr, const FString&)
+		{
+			PackageStrings.Add(PackageStr);
+			return true;
+		}))
 	{
+		return INDEX_NONE;
+	}
+
+	int32 Result = 0;
+	if (PackageStrings.Num() > 0)
+	{
+
 
 #if !UE_BUILD_SHIPPING
 		// Log stuff in non-shipping builds
-		auto Handle = AssetRegistry.OnAssetAdded().AddLambda([ChunkId](const FAssetData& Asset)
+		auto LogHandle = AssetRegistry.OnAssetAdded().AddLambda([ChunkId](const FAssetData& Asset)
 			{
 				UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Asset %s of type %s in chunk %d was added to AssetRegistry."),
 				*Asset.AssetName.ToString(), *Asset.AssetClassPath.ToString(), ChunkId);
@@ -1386,16 +1359,174 @@ bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, const TSubclassOf<UO
 #endif
 
 		// Scan the paths through the AssetRegistry to make sure it is aware of them.
-		// This is a costly function, but we are scanning only the actual files, so it should be mitigated unless seaching for all files in a very heavy pak.
-		AssetRegistry.ScanFilesSynchronous(Paths);
+		// This is a costly function, but we are scanning only the actual files, so it should be mitigated unless searching for all files in a very heavy pak.
+		auto Handle = AssetRegistry.OnAssetAdded().AddLambda([&Result](const FAssetData&) { Result++; });
+		AssetRegistry.ScanFilesSynchronous(PackageStrings.Array());
+		AssetRegistry.OnAssetAdded().Remove(Handle);
 
 #if !UE_BUILD_SHIPPING
 		// Remove logging lambda
-		AssetRegistry.OnAssetAdded().Remove(Handle);
+		AssetRegistry.OnAssetAdded().Remove(LogHandle);
 #endif		
+	}
+
+	return Result;
+}
+
+bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, TArray<TSoftObjectPtr<UObject>>& Content,
+	bool bPreScanAssets,
+	const FName& inPackageName,
+	const FName& inPackagePath, bool bRecursivePath,
+	const TSubclassOf<UObject>& inClass, bool bRecursiveClass
+) const
+{
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	
+	// We want to loosely match the PackageName if possible.
+	TArray<FString> inPackageStr;
+	if (!inPackageName.IsNone()) { 
+		inPackageName.ToString().ParseIntoArray(inPackageStr, TEXT("/"));
+	}
+
+	FARFilter Filter;			// Filter to find desired assets in AssetRegistry	
+	TArray<FName>& PackageNames = Filter.PackageNames;
+	
+	// We could do this without the conditional here but I think it's best to avoid allocating an extra container if it isn't necessary.
+	if (bPreScanAssets)
+	{
+		TSet<FString> PackageStrings;
+		if (!InspectChunkContent(ChunkId, [&PackageNames, &PackageStrings, inPackageStr](const FString& PackageStr, const FString&)
+			{
+				// If we got a specific package to search for, only add it if found. Otherwise, add all of them.
+				if (inPackageStr.Num() > 0)
+				{
+					if (PackageNames.Num() <= 0)
+					{
+						// We are loosely matching the package name.
+						TArray<FString> TestStr1 = inPackageStr;
+						TArray<FString> TestStr2;
+						PackageStr.ParseIntoArray(TestStr2, TEXT("/"));
+
+						if (TestStr1.Num() <= TestStr2.Num())
+						{
+							bool bMatch = true;
+							while (bMatch && TestStr1.Num() > 0)
+							{
+								FString Str1 = TestStr1.Pop();
+								FString Str2 = TestStr2.Pop();
+								if (!Str1.Equals(Str2))
+								{
+									bMatch = false;
+								}
+							}
+							if (bMatch)
+							{
+								PackageNames.Add(FName(PackageStr));
+							}
+						}
+					}
+				}
+				else
+				{
+					PackageNames.Add(FName(PackageStr));
+				}
+
+				// Since we are doing an asset registry scan we need to do the whole loop.
+				PackageStrings.Add(PackageStr);
+				return true;
+			}))
+		{
+			return false;
+		}
+
+		if (PackageStrings.Num() > 0)
+		{
+
+#if !UE_BUILD_SHIPPING
+			// Log stuff in non-shipping builds
+			auto LogHandle = AssetRegistry.OnAssetAdded().AddLambda([ChunkId](const FAssetData& Asset)
+				{
+					UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Asset %s of type %s in chunk %d was added to AssetRegistry."),
+					*Asset.AssetName.ToString(), *Asset.AssetClassPath.ToString(), ChunkId);
+				});
+#endif
+
+			// Scan the paths through the AssetRegistry to make sure it is aware of them.
+			// This is a costly function, but we are scanning only the actual files, so it should be mitigated unless searching for all files in a very heavy pak.
+			AssetRegistry.ScanFilesSynchronous(PackageStrings.Array());
+
+#if !UE_BUILD_SHIPPING
+			// Remove logging lambda
+			AssetRegistry.OnAssetAdded().Remove(LogHandle);
+#endif
+
+		}
+	}
+	else 
+	{
+		if (!InspectChunkContent(ChunkId, [&PackageNames, inPackageStr](const FString& PackageStr, const FString&)
+			{
+				// If we got a specific package to search for, only add it if found. Otherwise, add all of them.
+				if (inPackageStr.Num() > 0) 
+				{
+					if (PackageNames.Num() <= 0)
+					{
+						// We are loosely matching the package name.
+						TArray<FString> TestStr1 = inPackageStr;
+						TArray<FString> TestStr2;
+						PackageStr.ParseIntoArray(TestStr2, TEXT("/"));
+
+						if (TestStr1.Num() <= TestStr2.Num())
+						{
+							bool bMatch = true;
+							while (bMatch && TestStr1.Num() > 0)
+							{
+								FString Str1 = TestStr1.Pop();
+								FString Str2 = TestStr2.Pop();
+								if (!Str1.Equals(Str2))
+								{
+									bMatch = false;
+								}
+							}
+							if (bMatch)
+							{
+								PackageNames.Add(FName(PackageStr));
+								// Since we are not doing an asset registry scan, if we are looking for a specific package we can break the loop here.
+								return false;
+							}
+						}
+					}
+				}
+				else
+				{
+					PackageNames.Add(FName(PackageStr));
+				}
+
+				return true;
+			}))
+		{
+			return false;
+		}
+	}
+
+
+	if (PackageNames.Num() > 0)
+	{
+		// Finalize populating filter data
+		if (IsValid(inClass))
+		{
+			Filter.ClassPaths.Add(FSoftClassPath(inClass).GetAssetPath());
+			Filter.bRecursiveClasses = bRecursiveClass;
+		}
+
+		if (!inPackagePath.IsNone())
+		{
+			Filter.PackageNames.Add(inPackagePath);
+			Filter.bRecursivePaths = bRecursivePath;
+		}
 
 		// Enumerate assets and convert to soft object pointers
-		AssetRegistry.EnumerateAssets(Filter, [&Content](const FAssetData& Asset) -> bool
+		AssetRegistry.EnumerateAssets(Filter, [&Content](const FAssetData& Asset)
 			{
 				Content.AddUnique(TSoftObjectPtr<UObject>(Asset.GetSoftObjectPath()));
 				return true;
@@ -1404,6 +1535,7 @@ bool FChunkDownloaderCustom::GetChunkContent(int32 ChunkId, const TSubclassOf<UO
 
 	return Content.Num() > 0;
 }
+
 
 bool FChunkDownloaderCustom::UpdateLoadingMode()
 {
@@ -1829,7 +1961,7 @@ void FChunkDownloaderCustom::DownloadChunkInternal(const FChunk& Chunk, const FC
 	check(MultiCallback->GetNumPending() > 0);
 } //-V773
 
-void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, bool bPreScanAssets, const FCallback& Callback)
 {
 	check(!Chunk.bIsMounted);
 
@@ -1838,6 +1970,12 @@ void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& 
 	{
 		if (!Chunk.MountTask->GetTask().bIsUnmountTask)
 		{
+			// Flag for Asset Registry scan if necessary. Never set it to false here since at least one call already expects the scan to be done.
+			if (bPreScanAssets)
+			{
+				Chunk.MountTask->GetTask().bPreScanAssets = true;
+			}
+
 			// join with the existing callbacks
 			if (Callback)
 			{
@@ -1845,19 +1983,20 @@ void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& 
 			}
 			return;
 		}
+
 		// there is an unmount pending. Which is sad because we're gonna queue this to mount right after it gets unmounted. :(
 		// maybe we could swap this so a cancellable task?
 		TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 		int32 ChunkId = Chunk.ChunkId;
 
-		Chunk.MountTask->GetTask().PostMountCallbacks.Add([WeakThisPtr, ChunkId, Callback](bool)
+		Chunk.MountTask->GetTask().PostMountCallbacks.Add([WeakThisPtr, ChunkId, bPreScanAssets, Callback](bool)
 			{
 				// no need to check for success.
 				TSharedPtr<FChunkDownloaderCustom> SharedThis = WeakThisPtr.Pin();
 				if (SharedThis.IsValid())
 				{
 					// if the chunk finished unmounting do the mount.
-					SharedThis->MountChunk(ChunkId, Callback);
+					SharedThis->MountChunk(ChunkId, Callback, bPreScanAssets);
 					return;
 				}
 				// if anything went wrong, fire the callback now
@@ -1894,6 +2033,7 @@ void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& 
 		FPakMountWork& MountWork = Chunk.MountTask->GetTask();
 		MountWork.ChunkId = Chunk.ChunkId;
 		MountWork.bIsUnmountTask = false;
+		MountWork.bPreScanAssets = bPreScanAssets;
 		MountWork.CacheFolder = CacheFolder;
 		MountWork.EmbeddedFolder = EmbeddedFolder;
 		for (const TSharedRef<FPakFileRecord>& PakFile : Chunk.PakFiles)
@@ -1922,7 +2062,7 @@ void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& 
 		// queue up pak file downloads
 		TWeakPtr<FChunkDownloaderCustom> WeakThisPtr = AsShared();
 		int32 ChunkId = Chunk.ChunkId;
-		DownloadChunkInternal(Chunk, [WeakThisPtr, ChunkId, Callback](bool bDownloadSuccess) {
+		DownloadChunkInternal(Chunk, [WeakThisPtr, ChunkId, bPreScanAssets, Callback](bool bDownloadSuccess) {
 			// if the download failed, we can't mount
 			if (bDownloadSuccess)
 			{
@@ -1930,7 +2070,7 @@ void FChunkDownloaderCustom::MountChunkInternal(FChunk& Chunk, const FCallback& 
 				if (SharedThis.IsValid())
 				{
 					// if all chunks are downloaded, do the mount again (this will pick up any changes and continue downloading if needed)
-					SharedThis->MountChunk(ChunkId, Callback);
+					SharedThis->MountChunk(ChunkId, Callback, bPreScanAssets);
 					return;
 				}
 			}
@@ -2130,6 +2270,13 @@ void FChunkDownloaderCustom::CompleteMountTask(FChunk& Chunk)
 		if (bAllPaksMounted)
 		{
 			UE_LOG(LogChunkDownloaderCustom, Log, TEXT("Chunk %d mount succeeded."), Chunk.ChunkId);
+
+			// If an Asset Registry scan should be performed, do so now:
+			if (MountWork.bPreScanAssets)
+			{
+				const int32 ScanResult = ScanAssetsInChunk(Chunk.ChunkId);
+				UE_LOG(LogChunkDownloaderCustom, Log, TEXT("%d assets added to Asset Registry from Chunk %d."), ScanResult, Chunk.ChunkId);
+			}
 		}
 		else
 		{
@@ -2314,7 +2461,7 @@ void FChunkDownloaderCustom::DownloadChunks(const TArray<int32>& ChunkIds, const
 	ComputeLoadingStats();
 }
 
-void FChunkDownloaderCustom::MountChunk(int32 ChunkId, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunk(int32 ChunkId, const FCallback& Callback, bool bPreScanAssets)
 {
 	// look up the chunk
 	TSharedRef<FChunk>* ChunkPtr = Chunks.Find(ChunkId);
@@ -2337,14 +2484,14 @@ void FChunkDownloaderCustom::MountChunk(int32 ChunkId, const FCallback& Callback
 	}
 
 	// mount the chunk
-	MountChunkInternal(Chunk, Callback);
+	MountChunkInternal(Chunk, bPreScanAssets, Callback);
 
 	// resave manifest if needed
 	SaveLocalManifest(false);
 	ComputeLoadingStats();
 }
 
-void FChunkDownloaderCustom::MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback)
+void FChunkDownloaderCustom::MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback, bool bPreScanAssets)
 {
 	// convert to chunk references
 	TArray<TSharedRef<FChunk>> ChunksToMount;
@@ -2382,7 +2529,7 @@ void FChunkDownloaderCustom::MountChunks(const TArray<int32>& ChunkIds, const FC
 		FMultiCallback* MultiCallback = new FMultiCallback(Callback);
 		for (const TSharedRef<FChunk>& Chunk : ChunksToMount)
 		{
-			MountChunkInternal(*Chunk, MultiCallback->AddPending());
+			MountChunkInternal(*Chunk, bPreScanAssets, MultiCallback->AddPending());
 		}
 		check(MultiCallback->GetNumPending() > 0);
 	} //-V773
@@ -2391,7 +2538,7 @@ void FChunkDownloaderCustom::MountChunks(const TArray<int32>& ChunkIds, const FC
 		// no need to manage callbacks
 		for (const TSharedRef<FChunk>& Chunk : ChunksToMount)
 		{
-			MountChunkInternal(*Chunk, FCallback());
+			MountChunkInternal(*Chunk, bPreScanAssets, FCallback());
 		}
 	}
 #endif

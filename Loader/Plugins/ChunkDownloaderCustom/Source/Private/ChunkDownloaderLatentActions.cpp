@@ -34,11 +34,7 @@ UCDL_UpdateBuild_AsyncAction* UCDL_UpdateBuild_AsyncAction::UpdateBuild(FLatentA
 					{
 						if (Target.IsValid())
 						{
-							if (bPreloadCachedBuild)
-							{
-								Target->LoadCachedBuild(DeploymentName);
-							}
-							Target->UpdateBuild(DeploymentName, ContentBuildId, Callback);
+							Target->UpdateBuild(DeploymentName, ContentBuildId, bPreloadCachedBuild, Callback);
 							return true;
 						}
 						return false;
@@ -94,18 +90,18 @@ UCDL_UnmountChunk_AsyncAction* UCDL_UnmountChunk_AsyncAction::UnmountChunk(FLate
 	return nullptr;
 }
 
-UCDL_MountChunks_AsyncAction* UCDL_MountChunks_AsyncAction::MountChunks(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target, const TArray<int32>& ChunkIds)
+UCDL_MountChunks_AsyncAction* UCDL_MountChunks_AsyncAction::MountChunks(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target, const TArray<int32>& ChunkIds, bool bPreScanAssets)
 {
 	if (Target)
 	{
 
 			if (auto Result = ULatentAsyncAction::Create<UCDL_MountChunks_AsyncAction>(Target->GetGameInstance(), LatentInfo.CallbackTarget, LatentInfo.UUID))
 			{
-				Result->Function = FFunction([Target = TWeakObjectPtr<UChunkDownloaderSubsystem>(Target), ChunkIds](const FCallback& Callback)
+				Result->Function = FFunction([Target = TWeakObjectPtr<UChunkDownloaderSubsystem>(Target), ChunkIds, bPreScanAssets](const FCallback& Callback)
 					{
 						if (Target.IsValid())
 						{
-							Target->MountChunks(ChunkIds, Callback);
+							Target->MountChunks(ChunkIds, bPreScanAssets, Callback);
 							return true;
 						}
 						return false;
@@ -117,17 +113,17 @@ UCDL_MountChunks_AsyncAction* UCDL_MountChunks_AsyncAction::MountChunks(FLatentA
 	return nullptr;
 }
 
-UCDL_MountChunk_AsyncAction* UCDL_MountChunk_AsyncAction::MountChunk(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target, int32 ChunkId)
+UCDL_MountChunk_AsyncAction* UCDL_MountChunk_AsyncAction::MountChunk(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target, int32 ChunkId, bool bPreScanAssets)
 {
 	if (Target)
 	{
 			if (auto Result = ULatentAsyncAction::Create<UCDL_MountChunk_AsyncAction>(Target->GetGameInstance(), LatentInfo.CallbackTarget, LatentInfo.UUID))
 			{
-				Result->Function = FFunction([Target = TWeakObjectPtr<UChunkDownloaderSubsystem>(Target), ChunkId](const FCallback& Callback)
+				Result->Function = FFunction([Target = TWeakObjectPtr<UChunkDownloaderSubsystem>(Target), ChunkId, bPreScanAssets](const FCallback& Callback)
 					{
 						if (Target.IsValid())
 						{
-							Target->MountChunk(ChunkId, Callback);
+							Target->MountChunk(ChunkId, bPreScanAssets, Callback);
 							return true;
 						}
 						return false;

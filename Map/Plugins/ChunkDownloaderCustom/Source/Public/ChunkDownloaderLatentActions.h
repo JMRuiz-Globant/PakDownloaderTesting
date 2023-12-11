@@ -53,7 +53,7 @@ public:
 	// the client should compare ContentBuildId with its current embedded build id to determine if this content is 
 	// even compatible BEFORE calling this function. e.g. ContentBuildId="v1.4.22-r23928293" we might consider BUILD_VERSION="1.4.1" 
 	// compatible but BUILD_VERSION="1.3.223" incompatible (needing an update)
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo = "LatentInfo", DefaultToSelf = "Target"))
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo = "LatentInfo", DefaultToSelf = "Target", AdvancedDisplay = "bPreloadCachedBuild"))
     static UCDL_UpdateBuild_AsyncAction* UpdateBuild(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target
 		, const FString& DeploymentName, const FString& ContentBuildId, bool bPreloadCachedBuild = true
 	);
@@ -95,9 +95,10 @@ class CHUNKDOWNLOADERCUSTOM_API UCDL_MountChunks_AsyncAction : public UCDL_Async
 public:
 
 	// Download and mount all chunks then fire the callback (convenience wrapper managing multiple MountChunk calls)
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target"))
+	// @param bPreScanAssets	If true, assets contained in the chunk files will be scanned with the Asset Registry after mounting.
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target", AdvancedDisplay="bPreScanAssets"))
 	static UCDL_MountChunks_AsyncAction* MountChunks(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target
-		, const TArray<int32>& ChunkIds
+		, const TArray<int32>& ChunkIds, bool bPreScanAssets = true
 	);
 };
 
@@ -109,9 +110,10 @@ class CHUNKDOWNLOADERCUSTOM_API UCDL_MountChunk_AsyncAction : public UCDL_AsyncA
 public:
 
 	// download all pak files, then asynchronously mount them in order (in order among themselves, async with game thread).
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target"))
+	// @param bPreScanAssets	If true, assets contained in the chunk files will be scanned with the Asset Registry after mounting.
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target", AdvancedDisplay = "bPreScanAssets"))
 	static UCDL_MountChunk_AsyncAction* MountChunk(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target
-		, int32 ChunkId
+		, int32 ChunkId, bool bPreScanAssets = true
 	);
 };
 
@@ -123,7 +125,7 @@ class CHUNKDOWNLOADERCUSTOM_API UCDL_DownloadChunks_AsyncAction : public UCDL_As
 public:
 
 	// Download (Cache) all pak files in these chunks then fire the callback (convenience wrapper managing multiple DownloadChunk calls)
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target"))
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target", AdvancedDisplay = "Priority"))
 	static UCDL_DownloadChunks_AsyncAction* DownloadChunks(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target
 		, const TArray<int32>& ChunkIds, int32 Priority = 0
 	);
@@ -138,7 +140,7 @@ public:
 
 	// download all pak files in the chunk, but don't mount. Callback is fired when all paks have finished caching 
 	// (whether success or failure). Downloads will retry forever, but might fail due to space issues.
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target"))
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader|Latent", meta=(BlueprintInternalUseOnly="true", LatentInfo="LatentInfo", DefaultToSelf="Target", AdvancedDisplay = "Priority"))
 	static UCDL_DownloadChunk_AsyncAction* DownloadChunk(FLatentActionInfo LatentInfo, UChunkDownloaderSubsystem* Target
 		, int32 ChunkId, int32 Priority = 0
 	);

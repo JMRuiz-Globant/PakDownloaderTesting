@@ -54,7 +54,7 @@ public:
 	// the client should compare ContentBuildId with its current embedded build id to determine if this content is 
 	// even compatible BEFORE calling this function. e.g. ContentBuildId="v1.4.22-r23928293" we might consider BUILD_VERSION="1.4.1" 
 	// compatible but BUILD_VERSION="1.3.223" incompatible (needing an update)
-	void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, const FCallback& Callback);
+	void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, const FCallback& Callback, bool bPreloadCachedBuild = false);
 
 	// get the current status of the specified chunk
 	EChunkStatus GetChunkStatus(int32 ChunkId) const;
@@ -63,10 +63,10 @@ public:
 	void GetAllChunkIds(TArray<int32>& OutChunkIds) const;
 
 	// Download and mount all chunks then fire the callback (convenience wrapper managing multiple MountChunk calls)
-	void MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback);
+	void MountChunks(const TArray<int32>& ChunkIds, const FCallback& Callback, bool bPreScanAssets = false);
 
 	// download all pak files, then asynchronously mount them in order (in order among themselves, async with game thread). 
-	void MountChunk(int32 ChunkId, const FCallback& Callback);
+	void MountChunk(int32 ChunkId, const FCallback& Callback, bool bPreScanAssets = false);
 
 	// Download (Cache) all pak files in these chunks then fire the callback (convenience wrapper managing multiple DownloadChunk calls)
 	void DownloadChunks(const TArray<int32>& ChunkIds, const FCallback& Callback, int32 Priority = 0);
@@ -94,12 +94,27 @@ public:
 	// downloads have completed. If no downloads/mounts are currently queued by the end of the frame, callback will fire next frame.
 	void BeginLoadingMode(const FCallback& Callback);
 
-	// if mounted, inspect the files contained in the chunk and export it as an array of file paths.
-	// by default only cooked assets will be listed (.uasset and .umap files), but a flag can be set to export all contents, including .uexp files.
-	bool GetChunkContent(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly) const;
+	// Inspect all files in the paks with the given ID and call a predicate on each inspected file.
+	// returns true if the files were inspected successfully, false if the chunk wasn't found or mounted, or if the chunk contains no valid files.
+	// 
+	// The predicate must return a bool and have two string parameters.
+	// First parameter will contain the filename (without extension) of the file, and second will contain the file's path relative to the pak's mount point (with extension).
+	// Returning false from the predicate will cause the loop to break early. Return true to continue to the next iteration.
+	// by default the predicate will only be called on cooked assets (.uasset and .umap files).
+	bool InspectChunkContent(int32 ChunkId, const TFunction<bool(const FString&, const FString&)>& Predicate, bool bCookedOnly = true) const;
 
-	// if mounted, inspect the files contained in the chunk and export it as an array of soft object pointers of the desired class.
-	bool GetChunkContent(int32 ChunkId, const TSubclassOf<UObject>& Class, TArray<TSoftObjectPtr<UObject>>& Content) const;
+	// Inspect all files in the paks with the given ID and scan them with the AssetRegistry.
+	// returns the number of files added to the AssetRegistry (can be 0 if the AssetRegistry was already aware of them), or -1 if the chunk wasn't found or mounted.
+	int32 ScanAssetsInChunk(int32 ChunkId) const;
+
+	// if mounted, inspect the files contained in the chunk and export it as an array of soft object pointers of the desired class, optionally filtering the results further.
+	// if bPreScanAssets is set to true, all chunk contents will be scanned to make sure the AssetRegistry is aware of them before searching for the desired assets.
+	bool GetChunkContent(int32 ChunkId, TArray<TSoftObjectPtr<UObject>>& Content,
+		bool bPreScanAssets = false,
+		const FName& PackageName = FName(),
+		const FName& PackagePath = FName(), bool bRecursivePath = true,
+		const TSubclassOf<UObject>& Class = TSubclassOf<UObject>(), bool bRecursiveClass = true
+	) const;
 
 	// Called whenever a chunk mounts (success or failure). ONLY USE THIS IF YOU WANT TO PASSIVELY LISTEN FOR MOUNTS (otherwise use the proper request callback on MountChunk)
 	FPlatformChunkInstallMultiDelegate OnChunkMounted;
@@ -255,7 +270,7 @@ private:
 	void DownloadChunkInternal(const FChunk& Chunk, const FCallback& Callback, int32 Priority);
 	void DownloadPakFileInternal(const TSharedRef<FPakFileRecord>& PakFile, const FCallback& Callback, int32 Priority);
 	
-	void MountChunkInternal(FChunk& Chunk, const FCallback& Callback);
+	void MountChunkInternal(FChunk& Chunk, bool bPreScanAssets, const FCallback& Callback);
 	void UnmountChunkInternal(FChunk& Chunk, const FCallback& Callback);	
 
 	void CompleteMountTask(FChunk& Chunk);

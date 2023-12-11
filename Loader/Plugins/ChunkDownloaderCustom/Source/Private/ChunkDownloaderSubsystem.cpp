@@ -18,14 +18,14 @@ bool UChunkDownloaderSubsystem::LoadCachedBuild(const FString& DeploymentName)
 	return FChunkDownloaderCustom::GetChecked()->LoadCachedBuild(DeploymentName);
 }
 
-void UChunkDownloaderSubsystem::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, FCallbackDelegate Callback)
+void UChunkDownloaderSubsystem::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, bool bPreloadCachedBuild, FCallbackDelegate Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->UpdateBuild(DeploymentName, ContentBuildId, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); });
+	FChunkDownloaderCustom::GetChecked()->UpdateBuild(DeploymentName, ContentBuildId, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); }, bPreloadCachedBuild);
 }
 
-void UChunkDownloaderSubsystem::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, FCallback Callback)
+void UChunkDownloaderSubsystem::UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, bool bPreloadCachedBuild, FCallback Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->UpdateBuild(DeploymentName, ContentBuildId, Callback);
+	FChunkDownloaderCustom::GetChecked()->UpdateBuild(DeploymentName, ContentBuildId, Callback, bPreloadCachedBuild);
 }
 
 FString UChunkDownloaderSubsystem::GetContentBuildId() const
@@ -88,24 +88,24 @@ void UChunkDownloaderSubsystem::UnmountChunk(int32 ChunkId, FCallback Callback)
 	FChunkDownloaderCustom::GetChecked()->UnmountChunk(ChunkId, Callback);
 }
 
-void UChunkDownloaderSubsystem::MountChunks(const TArray<int32>& ChunkIds, FCallbackDelegate Callback)
+void UChunkDownloaderSubsystem::MountChunks(const TArray<int32>& ChunkIds, bool bPreScanAssets, FCallbackDelegate Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->MountChunks(ChunkIds, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); });
+	FChunkDownloaderCustom::GetChecked()->MountChunks(ChunkIds, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); }, bPreScanAssets);
 }
 
-void UChunkDownloaderSubsystem::MountChunks(const TArray<int32>& ChunkIds, FCallback Callback)
+void UChunkDownloaderSubsystem::MountChunks(const TArray<int32>& ChunkIds, bool bPreScanAssets, FCallback Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->MountChunks(ChunkIds, Callback);
+	FChunkDownloaderCustom::GetChecked()->MountChunks(ChunkIds, Callback, bPreScanAssets);
 }
 
-void UChunkDownloaderSubsystem::MountChunk(int32 ChunkId, FCallbackDelegate Callback)
+void UChunkDownloaderSubsystem::MountChunk(int32 ChunkId, bool bPreScanAssets, FCallbackDelegate Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->MountChunk(ChunkId, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); });
+	FChunkDownloaderCustom::GetChecked()->MountChunk(ChunkId, [Callback](bool bSuccess) { Callback.ExecuteIfBound(bSuccess); }, bPreScanAssets);
 }
 
-void UChunkDownloaderSubsystem::MountChunk(int32 ChunkId, FCallback Callback)
+void UChunkDownloaderSubsystem::MountChunk(int32 ChunkId, bool bPreScanAssets, FCallback Callback)
 {
-	FChunkDownloaderCustom::GetChecked()->MountChunk(ChunkId, Callback);
+	FChunkDownloaderCustom::GetChecked()->MountChunk(ChunkId, Callback, bPreScanAssets);
 }
 
 void UChunkDownloaderSubsystem::DownloadChunks(const TArray<int32>& ChunkIds, FCallbackDelegate Callback, int32 Priority)
@@ -158,16 +158,42 @@ int32 UChunkDownloaderSubsystem::GetNumDownloadRequests() const
 	return FChunkDownloaderCustom::GetChecked()->GetNumDownloadRequests();
 }
 
+int32 UChunkDownloaderSubsystem::ScanAssetsInChunk(int32 ChunkId)
+{
+	return FChunkDownloaderCustom::GetChecked()->ScanAssetsInChunk(ChunkId);
+}
+
 void UChunkDownloaderSubsystem::GetChunkContentPaths(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly)
 {
-	FChunkDownloaderCustom::GetChecked()->GetChunkContent(ChunkId, Content, bCookedOnly);
+	Content.Empty();
+	FChunkDownloaderCustom::GetChecked()->InspectChunkContent(ChunkId, [&Content](const FString&, const FString& PackagePath)
+		{
+			Content.Add(PackagePath);
+			return true;
+		}, bCookedOnly);
 }
 
-void UChunkDownloaderSubsystem::GetChunkContent(int32 ChunkId, TSubclassOf<UObject> Class, TArray<TSoftObjectPtr<UObject>>& Content)
+void UChunkDownloaderSubsystem::GetChunkContentPackageNames(int32 ChunkId, TArray<FString>& Content)
 {
-	FChunkDownloaderCustom::GetChecked()->GetChunkContent(ChunkId, Class, Content);
+	Content.Empty();
+	FChunkDownloaderCustom::GetChecked()->InspectChunkContent(ChunkId, [&Content](const FString& PackageStr, const FString&)
+		{
+			Content.Add(PackageStr);
+			return true;
+		});
 }
 
+void UChunkDownloaderSubsystem::GetAssetsInChunk(int32 ChunkId, TArray<TSoftObjectPtr<UObject>>& Assets, bool bPreScanAssets, FName PackageName, FName PackagePath, bool bRecursivePath, TSubclassOf<UObject> Class, bool bRecursiveClass)
+{
+	FChunkDownloaderCustom::GetChecked()->GetChunkContent(ChunkId, Assets, bPreScanAssets, PackageName, PackagePath, bRecursivePath, Class, bRecursiveClass);
+}
+
+void UChunkDownloaderSubsystem::FindAssetInChunk(int32 ChunkId, TSoftObjectPtr<UObject>& Asset, bool bPreScanAssets, FName PackageName, FName PackagePath, bool bRecursivePath, TSubclassOf<UObject> Class, bool bRecursiveClass)
+{
+	TArray<TSoftObjectPtr<UObject>> Assets;
+	FChunkDownloaderCustom::GetChecked()->GetChunkContent(ChunkId, Assets, bPreScanAssets, PackageName, PackagePath, bRecursivePath, Class, bRecursiveClass);
+	Asset = Assets.Num() > 0 ? Assets[0] : nullptr;
+}
 
 
 

@@ -25,9 +25,9 @@ public:
 	// the client should compare ContentBuildId with its current embedded build id to determine if this content is 
 	// even compatible BEFORE calling this function. e.g. ContentBuildId="v1.4.22-r23928293" we might consider BUILD_VERSION="1.4.1" 
 	// compatible but BUILD_VERSION="1.3.223" incompatible (needing an update)
-    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
-    void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, FCallbackDelegate Callback);
-	void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, FCallback Callback);
+    UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta=(AdvancedDisplay="bPreloadCachedBuild"))
+    void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, bool bPreloadCachedBuild, FCallbackDelegate Callback);
+	void UpdateBuild(const FString& DeploymentName, const FString& ContentBuildId, bool bPreloadCachedBuild, FCallback Callback);
 
 	// get the current content build ID
 	UFUNCTION(BlueprintPure, Category = "Chunk Downloader")
@@ -62,7 +62,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
 	void GetAllChunkIds(TArray<int32>& OutChunkIds) const;
 
-
 	// Unmount all chunks then fire the callback (convenience wrapper managing multiple UnmountChunk calls)
 	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
 	void UnmountChunks(const TArray<int32>& ChunkIds, FCallbackDelegate Callback);
@@ -74,23 +73,25 @@ public:
 	void UnmountChunk(int32 ChunkId, FCallback Callback);
 
 	// Download and mount all chunks then fire the callback (convenience wrapper managing multiple MountChunk calls)
-	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
-	void MountChunks(const TArray<int32>& ChunkIds, FCallbackDelegate Callback);
-	void MountChunks(const TArray<int32>& ChunkIds, FCallback Callback);
+	// @param bPreScanAssets	If true, assets contained in the chunk files will be scanned with the Asset Registry after mounting.
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta=(AdvancedDisplay="bPreScanAssets"))
+	void MountChunks(const TArray<int32>& ChunkIds, bool bPreScanAssets, FCallbackDelegate Callback);
+	void MountChunks(const TArray<int32>& ChunkIds, bool bPreScanAssets, FCallback Callback);
 
 	// download all pak files, then asynchronously mount them in order (in order among themselves, async with game thread).
-	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
-	void MountChunk(int32 ChunkId, FCallbackDelegate Callback);
-	void MountChunk(int32 ChunkId, FCallback Callback);
+	// @param bPreScanAssets	If true, assets contained in the chunk files will be scanned with the Asset Registry after mounting.
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay = "bPreScanAssets"))
+	void MountChunk(int32 ChunkId, bool bPreScanAssets, FCallbackDelegate Callback);
+	void MountChunk(int32 ChunkId, bool bPreScanAssets, FCallback Callback);
 
 	// Download (Cache) all pak files in these chunks then fire the callback (convenience wrapper managing multiple DownloadChunk calls)
-	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay = "Priority"))
 	void DownloadChunks(const TArray<int32>& ChunkIds, FCallbackDelegate Callback, int32 Priority = 0);
 	void DownloadChunks(const TArray<int32>& ChunkIds, FCallback Callback, int32 Priority = 0);
 
 	// download all pak files in the chunk, but don't mount. Callback is fired when all paks have finished caching 
 	// (whether success or failure). Downloads will retry forever, but might fail due to space issues.
-	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay = "Priority"))
 	void DownloadChunk(int32 ChunkId, FCallbackDelegate Callback, int32 Priority = 0);
 	void DownloadChunk(int32 ChunkId, FCallback Callback, int32 Priority = 0);
 
@@ -119,14 +120,42 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Chunk Downloader|Stats")
 	int32 GetNumDownloadRequests() const;
 
+	// if mounted, inspect the files contained in the chunk and scan them all with the Asset Registry, synchronously. Return the number of assets registered, which can be 0 if the Asset Registry was already aware of them from a prior scan.
+	// if not properly mounted, returns -1.
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
+	int32 ScanAssetsInChunk(int32 ChunkId);
+
 	// if mounted, inspect the files contained in the chunk and export it as an array of file paths.
 	// by default only cooked assets will be listed (.uasset and .umap files), but a flag can be set to export all contents, including .uexp files.
 	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta=(AdvancedDisplay="bCookedOnly"))
 	void GetChunkContentPaths(int32 ChunkId, TArray<FString>& Content, bool bCookedOnly = true);
 
-	// if mounted, inspect the files contained in the chunk and export it as an array of soft object pointers.
-	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay="Class", AutoCreateRefTerm="Class", DeterminesOutputType="Class", DynamicOutputParam="Content"))
-	void GetChunkContent(int32 ChunkId, TSubclassOf<UObject> Class, TArray<TSoftObjectPtr<UObject>>& Content);
+	// if mounted, inspect the files contained in the chunk and export it as an array of package names.
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader")
+	void GetChunkContentPackageNames(int32 ChunkId, TArray<FString>& Content);
+
+	/** if mounted, inspect the files contained in the chunk and export it as an array of soft object reference.
+	 * @param	bPreScanAssets	If set to true, perform a synchronous Asset Registry scan before searching for assets, to ensure that the game is aware of them.
+	 * @param	PackageName		If not none, filter the pak contents for a specific package.
+	 * @param	PackagePath		If not none, filter the pak contents for a specific folder.
+	 * @param	bRecursivePath	If true and filtering by path, also search within folders inside the desired path. If false, only files in the exact directory will be considered.
+	 * @param	Class			If valid, filter the pak contents for a specific class.
+	 * @param	bRecursiveClass	If true and filtering by class, also include children of the desired class. If false, only assets of the exact class will be considered.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay="2", AutoCreateRefTerm="Class", DeterminesOutputType="Class", DynamicOutputParam="Assets"))
+	void GetAssetsInChunk(int32 ChunkId, TArray<TSoftObjectPtr<UObject>>& Assets, bool bPreScanAssets, FName PackageName, FName PackagePath, bool bRecursivePath, TSubclassOf<UObject> Class, bool bRecursiveClass);
+
+	/** if mounted, inspect the files contained in the chunk and export the first one that matches the filters as a soft object reference.
+	 * @param	bPreScanAssets	If set to true, perform a synchronous Asset Registry scan before searching for assets, to ensure that the game is aware of them.
+	 * @param	PackageName		If not none, filter the pak contents for a specific package.
+	 * @param	PackagePath		If not none, filter the pak contents for a specific folder.
+	 * @param	bRecursivePath	If true and filtering by path, also search within folders inside the desired path. If false, only files in the exact directory will be considered.
+	 * @param	Class			If valid, filter the pak contents for a specific class.
+	 * @param	bRecursiveClass	If true and filtering by class, also include children of the desired class. If false, only assets of the exact class will be considered.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chunk Downloader", meta = (AdvancedDisplay="2", AutoCreateRefTerm="Class", DeterminesOutputType="Class", DynamicOutputParam="Asset"))
+	void FindAssetInChunk(int32 ChunkId, TSoftObjectPtr<UObject>& Asset, bool bPreScanAssets, FName PackageName, FName PackagePath, bool bRecursivePath, TSubclassOf<UObject> Class, bool bRecursiveClass);
+
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
